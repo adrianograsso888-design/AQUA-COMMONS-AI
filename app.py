@@ -46,6 +46,18 @@ TERRITORY = "Bacino Brenta–Bacchiglione"
 REGION = "Veneto, Italia"
 
 # ============================================================
+# SINCRONIZZAZIONE DEI PARAMETRI
+# ============================================================
+
+def save_widget_value(widget_key, scenario_key):
+    """
+    Copia il valore del widget nella memoria permanente
+    dello scenario.
+    """
+    st.session_state[scenario_key] = st.session_state[widget_key]
+
+
+# ============================================================
 # STILE
 # ============================================================
 
@@ -80,11 +92,6 @@ st.markdown(
 # ============================================================
 
 def proportional_allocation(availability, demands, minimums):
-    """
-    Rispetta prima tutte le quote minime.
-    Distribuisce poi la risorsa residua in proporzione
-    alla domanda ancora insoddisfatta di ciascun settore.
-    """
     allocations = {s: float(minimums[s]) for s in SECTORS}
     remaining = max(0.0, float(availability) - sum(allocations.values()))
 
@@ -97,10 +104,12 @@ def proportional_allocation(availability, demands, minimums):
 
     while remaining > tolerance:
         active = [s for s in SECTORS if capacities[s] > tolerance]
+
         if not active:
             break
 
         total_capacity = sum(capacities[s] for s in active)
+
         if total_capacity <= tolerance:
             break
 
@@ -108,13 +117,19 @@ def proportional_allocation(availability, demands, minimums):
         distributed = 0.0
 
         for sector in active:
-            share = amount_to_distribute * capacities[sector] / total_capacity
+            share = (
+                amount_to_distribute
+                * capacities[sector]
+                / total_capacity
+            )
+
             extra = min(share, capacities[sector])
             allocations[sector] += extra
             capacities[sector] -= extra
             distributed += extra
 
         remaining -= distributed
+
         if distributed <= tolerance:
             break
 
@@ -122,17 +137,13 @@ def proportional_allocation(availability, demands, minimums):
 
 
 def priority_allocation(availability, demands, minimums, priority):
-    """
-    Rispetta prima tutte le quote minime.
-    Distribuisce poi la risorsa residua seguendo l'ordine
-    di priorità scelto dall'utente.
-    """
     allocations = {s: float(minimums[s]) for s in SECTORS}
     remaining = max(0.0, float(availability) - sum(allocations.values()))
 
     for sector in priority:
         capacity = max(0.0, float(demands[sector]) - allocations[sector])
         extra = min(remaining, capacity)
+
         allocations[sector] += extra
         remaining -= extra
 
@@ -149,7 +160,12 @@ def calculate_results(demands, allocations):
         demand = float(demands[sector])
         allocated = float(allocations[sector])
         deficit = max(0.0, demand - allocated)
-        satisfaction = allocated / demand * 100 if demand > 0 else 100.0
+
+        satisfaction = (
+            allocated / demand * 100
+            if demand > 0
+            else 100.0
+        )
 
         rows.append(
             {
@@ -169,10 +185,12 @@ def get_scenario(availability, demands, minimums, priority, strategy):
         allocations = proportional_allocation(
             availability, demands, minimums
         )
+
     elif strategy == "priorità":
         allocations = priority_allocation(
             availability, demands, minimums, priority
         )
+
     else:
         raise ValueError("Strategia di allocazione non riconosciuta.")
 
@@ -181,14 +199,20 @@ def get_scenario(availability, demands, minimums, priority, strategy):
 
 def build_analysis(availability, demands, minimums, priority, strategy):
     results_df, allocations = get_scenario(
-        availability, demands, minimums, priority, strategy
+        availability,
+        demands,
+        minimums,
+        priority,
+        strategy,
     )
 
     total_demand = sum(float(demands[s]) for s in SECTORS)
     total_minimum = sum(float(minimums[s]) for s in SECTORS)
     total_allocated = sum(allocations.values())
+
     total_shortage = sum(
-        max(0.0, float(demands[s]) - allocations[s]) for s in SECTORS
+        max(0.0, float(demands[s]) - allocations[s])
+        for s in SECTORS
     )
 
     demand_coverage = (
@@ -198,13 +222,18 @@ def build_analysis(availability, demands, minimums, priority, strategy):
     )
 
     agricultural_shortage = max(
-        0.0, demands["Agricoltura"] - allocations["Agricoltura"]
+        0.0,
+        demands["Agricoltura"] - allocations["Agricoltura"],
     )
+
     industrial_shortage = max(
-        0.0, demands["Industria"] - allocations["Industria"]
+        0.0,
+        demands["Industria"] - allocations["Industria"],
     )
+
     civil_shortage = max(
-        0.0, demands["Usi civili"] - allocations["Usi civili"]
+        0.0,
+        demands["Usi civili"] - allocations["Usi civili"],
     )
 
     civil_coverage = (
@@ -213,13 +242,14 @@ def build_analysis(availability, demands, minimums, priority, strategy):
         else 100.0
     )
 
-    # Questa è una quota minima ipotizzata nel modello.
-    # Non è una misurazione del deflusso ecologico reale.
     environmental_minimum = float(minimums["Ambiente"])
     environmental_allocated = float(allocations["Ambiente"])
+
     environmental_constraint_gap = max(
-        0.0, environmental_minimum - environmental_allocated
+        0.0,
+        environmental_minimum - environmental_allocated,
     )
+
     environmental_constraint_coverage = (
         environmental_allocated / environmental_minimum * 100
         if environmental_minimum > 0
@@ -258,6 +288,7 @@ def build_comparison(availability, demands, minimums, priority):
     proportional = build_analysis(
         availability, demands, minimums, priority, "proporzionale"
     )
+
     priority_result = build_analysis(
         availability, demands, minimums, priority, "priorità"
     )
@@ -319,6 +350,7 @@ def generate_pdf_report(
     )
 
     styles = getSampleStyleSheet()
+
     title_style = ParagraphStyle(
         "AquaTitle",
         parent=styles["Title"],
@@ -326,6 +358,7 @@ def generate_pdf_report(
         fontSize=21,
         spaceAfter=10,
     )
+
     heading_style = ParagraphStyle(
         "AquaHeading",
         parent=styles["Heading2"],
@@ -334,9 +367,10 @@ def generate_pdf_report(
         spaceBefore=12,
         spaceAfter=6,
     )
-    body_style = styles["BodyText"]
 
+    body_style = styles["BodyText"]
     elements = []
+
     generated_at = datetime.now().strftime("%d/%m/%Y %H:%M")
 
     elements.append(Paragraph("AQUA COMMONS AI", title_style))
@@ -350,6 +384,7 @@ def generate_pdf_report(
 
     def add_table(data, widths):
         table = Table(data, colWidths=widths, repeatRows=1)
+
         table.setStyle(
             TableStyle(
                 [
@@ -362,9 +397,11 @@ def generate_pdf_report(
                 ]
             )
         )
+
         elements.append(table)
 
     elements.append(Paragraph("1. Sintesi dello scenario", heading_style))
+
     summary_data = [
         ["Indicatore", "Valore"],
         ["Territorio di riferimento", TERRITORY],
@@ -377,12 +414,15 @@ def generate_pdf_report(
         ["Deficit complessivo", f"{analysis['total_shortage']:.2f} hm³"],
         ["Copertura della domanda", f"{analysis['coverage']:.1f}%"],
     ]
+
     add_table(summary_data, [8 * cm, 8 * cm])
 
     elements.append(
         Paragraph("2. Domande e quote minime impostate", heading_style)
     )
+
     demand_data = [["Settore", "Domanda", "Quota minima"]]
+
     for sector in SECTORS:
         demand_data.append(
             [
@@ -391,14 +431,17 @@ def generate_pdf_report(
                 f"{minimums[sector]:.2f} hm³",
             ]
         )
+
     add_table(demand_data, [6 * cm, 5 * cm, 5 * cm])
 
     elements.append(
         Paragraph("3. Risultati dell'allocazione", heading_style)
     )
+
     allocation_data = [
         ["Settore", "Assegnata", "Deficit", "Soddisfatto"]
     ]
+
     for _, row in analysis["results_df"].iterrows():
         allocation_data.append(
             [
@@ -408,11 +451,13 @@ def generate_pdf_report(
                 f"{row['Fabbisogno soddisfatto (%)']:.1f}%",
             ]
         )
+
     add_table(allocation_data, [4.2 * cm, 4.1 * cm, 4.1 * cm, 4.5 * cm])
 
     elements.append(
         Paragraph("4. Indicatori di impatto e di scenario", heading_style)
     )
+
     impact_data = [
         ["Dimensione", "Indicatore", "Risultato"],
         [
@@ -441,18 +486,17 @@ def generate_pdf_report(
             f"{analysis['environmental_allocated']:.2f} hm³",
         ],
     ]
+
     add_table(impact_data, [4.4 * cm, 7.0 * cm, 5.5 * cm])
 
     elements.append(
         Paragraph("5. Confronto tra strategie", heading_style)
     )
+
     comparison_data = [
-        [
-            "Indicatore",
-            "Proporzionale",
-            "Per priorità",
-        ]
+        ["Indicatore", "Proporzionale", "Per priorità"]
     ]
+
     for _, row in comparison_df.iterrows():
         comparison_data.append(
             [
@@ -461,11 +505,13 @@ def generate_pdf_report(
                 str(row["Per priorità"]),
             ]
         )
+
     add_table(comparison_data, [8 * cm, 4.5 * cm, 4.5 * cm])
 
     elements.append(
         Paragraph("6. Ordine di priorità configurato", heading_style)
     )
+
     if strategy_name == "Allocazione per priorità":
         elements.append(Paragraph(" > ".join(priority), body_style))
     else:
@@ -480,6 +526,7 @@ def generate_pdf_report(
     elements.append(
         Paragraph("7. Assunzioni, limiti e responsabilità", heading_style)
     )
+
     notes = [
         (
             "Il presente documento è generato da un prototipo dimostrativo. "
@@ -507,61 +554,77 @@ def generate_pdf_report(
             "decisione finale compete alle autorità responsabili."
         ),
     ]
+
     for note in notes:
         elements.append(Paragraph(f"• {note}", body_style))
         elements.append(Spacer(1, 4))
 
     document.build(elements)
     buffer.seek(0)
+
     return buffer.getvalue()
 
 
 # ============================================================
-# STATO CONDIVISO
+# STATO PERMANENTE DELLO SCENARIO
 # ============================================================
 
-if "availability" not in st.session_state:
-    st.session_state["availability"] = 100.0
+# IMPORTANTE:
+# Queste chiavi non sono collegate direttamente ai widget.
+# Per questo Streamlit non le elimina quando si cambia pagina.
+
+if "scenario_availability" not in st.session_state:
+    st.session_state["scenario_availability"] = 100.0
 
 for sector in SECTORS:
-    demand_key = f"demand_{sector}"
-    minimum_key = f"minimum_{sector}"
+    demand_key = f"scenario_demand_{sector}"
+    minimum_key = f"scenario_minimum_{sector}"
 
     if demand_key not in st.session_state:
         st.session_state[demand_key] = DEFAULT_DEMAND[sector]
+
     if minimum_key not in st.session_state:
         st.session_state[minimum_key] = DEFAULT_MINIMUM[sector]
 
-# Priorità iniziali distinte: una per ciascun settore.
 for index, sector in enumerate(SECTORS):
-    priority_key = f"priority_{index}"
+    priority_key = f"scenario_priority_{index}"
+
     if priority_key not in st.session_state:
         st.session_state[priority_key] = sector
 
-# Recupero dello scenario persistente.
-availability = float(st.session_state["availability"])
+
+# ============================================================
+# RECUPERO DEI VALORI PER TUTTE LE PAGINE
+# ============================================================
+
+availability = float(
+    st.session_state["scenario_availability"]
+)
+
 demands = {
-    sector: float(st.session_state[f"demand_{sector}"])
+    sector: float(st.session_state[f"scenario_demand_{sector}"])
     for sector in SECTORS
 }
+
 minimums = {
-    sector: float(st.session_state[f"minimum_{sector}"])
+    sector: float(st.session_state[f"scenario_minimum_{sector}"])
     for sector in SECTORS
 }
+
 priority = [
-    st.session_state[f"priority_{index}"]
+    st.session_state[f"scenario_priority_{index}"]
     for index in range(len(SECTORS))
 ]
+
 priority_valid = (
     len(priority) == len(SECTORS)
     and len(set(priority)) == len(SECTORS)
     and set(priority) == set(SECTORS)
 )
 
-# Totali condivisi: disponibili in tutte le pagine.
-# Streamlit riesegue lo script a ogni cambio di pagina.
 total_demand = sum(demands.values())
 total_minimum = sum(minimums.values())
+
 
 # ============================================================
 # NAVIGAZIONE
@@ -587,16 +650,20 @@ st.sidebar.write(REGION)
 st.sidebar.divider()
 st.sidebar.caption("PROTOTIPO DIMOSTRATIVO")
 
+
 # ============================================================
 # 01 - WATER DASHBOARD
 # ============================================================
 
 if page == "Water Dashboard":
+
     st.title("Water Dashboard")
+
     st.write(
         "Panoramica della disponibilità idrica, della domanda "
         "e dei fabbisogni dei diversi settori."
     )
+
     st.info(
         "PROTOTIPO — I valori sono simulati e modificabili "
         "nell'Allocation Simulator. Non rappresentano misurazioni "
@@ -605,16 +672,25 @@ if page == "Water Dashboard":
 
     dashboard_total_demand = sum(demands.values())
     dashboard_total_minimum = sum(minimums.values())
-    theoretical_shortage = max(0.0, dashboard_total_demand - availability)
+
+    theoretical_shortage = max(
+        0.0,
+        dashboard_total_demand - availability,
+    )
+
     theoretical_coverage = (
-        min(availability, dashboard_total_demand) / dashboard_total_demand * 100
+        min(availability, dashboard_total_demand)
+        / dashboard_total_demand * 100
         if dashboard_total_demand > 0
         else 100.0
     )
+
     feasible = dashboard_total_minimum <= availability + 1e-9
 
     st.subheader("Indicatori principali")
+
     c1, c2, c3, c4 = st.columns(4)
+
     c1.metric("Disponibilità idrica", f"{availability:.1f} hm³")
     c2.metric("Domanda complessiva", f"{dashboard_total_demand:.1f} hm³")
     c3.metric("Deficit teorico", f"{theoretical_shortage:.1f} hm³")
@@ -639,6 +715,7 @@ if page == "Water Dashboard":
 
     st.divider()
     st.subheader("Fabbisogno per settore")
+
     demand_df = pd.DataFrame(
         {
             "Settore": SECTORS,
@@ -648,8 +725,12 @@ if page == "Water Dashboard":
     )
 
     left, right = st.columns([1.4, 1])
+
     with left:
-        st.bar_chart(demand_df.set_index("Settore")[["Fabbisogno (hm³)"]])
+        st.bar_chart(
+            demand_df.set_index("Settore")[["Fabbisogno (hm³)"]]
+        )
+
     with right:
         st.dataframe(
             demand_df,
@@ -658,35 +739,57 @@ if page == "Water Dashboard":
         )
 
     st.subheader("Copertura teorica della domanda")
+
     st.progress(min(max(theoretical_coverage / 100, 0), 1))
+
     st.write(f"Copertura teorica: **{theoretical_coverage:.1f}%**")
-    st.write(f"Domanda non coperta in termini teorici: **{theoretical_shortage:.1f} hm³**")
+    st.write(
+        f"Domanda non coperta in termini teorici: "
+        f"**{theoretical_shortage:.1f} hm³**"
+    )
+
 
 # ============================================================
 # 02 - ALLOCATION SIMULATOR
 # ============================================================
 
 elif page == "Allocation Simulator":
+
     st.title("Allocation Simulator")
+
     st.write(
         "Modifica la disponibilità idrica, i fabbisogni e le quote minime "
         "per confrontare due strategie alternative di allocazione."
     )
+
     st.info(
         "PROTOTIPO — I valori iniziali sono simulati. Le quote minime "
         "sono ipotesi del modello dimostrativo, non soglie normative ufficiali."
     )
 
     st.subheader("1. Parametri dello scenario")
+
+    # Inizializza il widget dal valore permanente.
+    # Se Streamlit ha eliminato il widget cambiando pagina,
+    # il valore viene recuperato dallo scenario salvato.
+
+    if "availability_input" not in st.session_state:
+        st.session_state["availability_input"] = (
+            st.session_state["scenario_availability"]
+        )
+
     availability = st.number_input(
         "Disponibilità idrica totale (hm³)",
         min_value=0.0,
         max_value=1000.0,
         step=5.0,
-        key="availability",
+        key="availability_input",
+        on_change=save_widget_value,
+        args=("availability_input", "scenario_availability"),
     )
 
     st.markdown("#### Fabbisogni e quote minime")
+
     header = st.columns([2, 1, 1])
     header[0].markdown("**Settore**")
     header[1].markdown("**Domanda (hm³)**")
@@ -696,12 +799,36 @@ elif page == "Allocation Simulator":
     minimums = {}
 
     for sector in SECTORS:
-        demand_key = f"demand_{sector}"
-        minimum_key = f"minimum_{sector}"
 
-        # Mantiene sempre la condizione quota minima <= domanda.
-        if st.session_state[minimum_key] > st.session_state[demand_key]:
-            st.session_state[minimum_key] = st.session_state[demand_key]
+        demand_scenario_key = f"scenario_demand_{sector}"
+        minimum_scenario_key = f"scenario_minimum_{sector}"
+
+        demand_widget_key = f"demand_input_{sector}"
+        minimum_widget_key = f"minimum_input_{sector}"
+
+        # Recupera i valori permanenti nei widget.
+        if demand_widget_key not in st.session_state:
+            st.session_state[demand_widget_key] = (
+                st.session_state[demand_scenario_key]
+            )
+
+        if minimum_widget_key not in st.session_state:
+            st.session_state[minimum_widget_key] = (
+                st.session_state[minimum_scenario_key]
+            )
+
+        # Mantiene la condizione quota minima <= domanda.
+        if (
+            st.session_state[minimum_scenario_key]
+            > st.session_state[demand_scenario_key]
+        ):
+            st.session_state[minimum_scenario_key] = (
+                st.session_state[demand_scenario_key]
+            )
+
+            st.session_state[minimum_widget_key] = (
+                st.session_state[demand_scenario_key]
+            )
 
         cols = st.columns([2, 1, 1])
         cols[0].write(sector)
@@ -711,7 +838,9 @@ elif page == "Allocation Simulator":
             min_value=0.0,
             max_value=1000.0,
             step=1.0,
-            key=demand_key,
+            key=demand_widget_key,
+            on_change=save_widget_value,
+            args=(demand_widget_key, demand_scenario_key),
             label_visibility="collapsed",
         )
 
@@ -720,7 +849,9 @@ elif page == "Allocation Simulator":
             min_value=0.0,
             max_value=float(demands[sector]),
             step=1.0,
-            key=minimum_key,
+            key=minimum_widget_key,
+            on_change=save_widget_value,
+            args=(minimum_widget_key, minimum_scenario_key),
             label_visibility="collapsed",
         )
 
@@ -728,49 +859,82 @@ elif page == "Allocation Simulator":
     total_minimum = sum(minimums.values())
 
     st.divider()
+
     m1, m2, m3 = st.columns(3)
+
     m1.metric("Disponibilità", f"{availability:.1f} hm³")
     m2.metric("Domanda totale", f"{total_demand:.1f} hm³")
     m3.metric("Quote minime richieste", f"{total_minimum:.1f} hm³")
 
     if total_minimum > availability + 1e-9:
+
         st.error(
             "SCENARIO NON FATTIBILE: le quote minime richieste superano "
             "la disponibilità idrica. Riduci le quote minime o aumenta "
             "la disponibilità prima di confrontare le strategie."
         )
+
     else:
-        st.success("Le quote minime inserite sono compatibili con la disponibilità.")
+
+        st.success(
+            "Le quote minime inserite sono compatibili con la disponibilità."
+        )
 
         st.subheader("2. Definizione delle priorità")
+
         st.write(
             "L'ordine viene applicato esclusivamente alla strategia "
             "«Allocazione per priorità»."
         )
 
         priority = []
+
         for index in range(len(SECTORS)):
+
+            priority_scenario_key = f"scenario_priority_{index}"
+            priority_widget_key = f"priority_input_{index}"
+
+            if priority_widget_key not in st.session_state:
+                st.session_state[priority_widget_key] = (
+                    st.session_state[priority_scenario_key]
+                )
+
             selected = st.selectbox(
                 f"Priorità {index + 1}",
                 options=SECTORS,
-                key=f"priority_{index}",
+                key=priority_widget_key,
+                on_change=save_widget_value,
+                args=(priority_widget_key, priority_scenario_key),
             )
+
             priority.append(selected)
 
         if len(set(priority)) != len(SECTORS):
+
             st.error(
                 "Ogni settore deve comparire una sola volta. "
                 "Correggi l'ordine delle priorità."
             )
+
         else:
+
             st.divider()
             st.subheader("3. Risultati della simulazione")
 
             prop_df, proportional_allocations = get_scenario(
-                availability, demands, minimums, priority, "proporzionale"
+                availability,
+                demands,
+                minimums,
+                priority,
+                "proporzionale",
             )
+
             priority_df, priority_allocations = get_scenario(
-                availability, demands, minimums, priority, "priorità"
+                availability,
+                demands,
+                minimums,
+                priority,
+                "priorità",
             )
 
             tab1, tab2 = st.tabs(
@@ -778,13 +942,21 @@ elif page == "Allocation Simulator":
             )
 
             with tab1:
+
                 st.markdown("#### Strategia proporzionale")
+
                 st.write(
                     "Dopo l'assegnazione delle quote minime, la risorsa residua "
                     "viene distribuita in proporzione ai fabbisogni ancora "
                     "insoddisfatti."
                 )
-                st.dataframe(prop_df, hide_index=True, use_container_width=True)
+
+                st.dataframe(
+                    prop_df,
+                    hide_index=True,
+                    use_container_width=True,
+                )
+
                 st.bar_chart(
                     prop_df.set_index("Settore")[
                         ["Domanda (hm³)", "Acqua assegnata (hm³)"]
@@ -792,12 +964,20 @@ elif page == "Allocation Simulator":
                 )
 
             with tab2:
+
                 st.markdown("#### Strategia per priorità")
+
                 st.write(
                     "Dopo l'assegnazione delle quote minime, la risorsa residua "
                     "viene distribuita seguendo l'ordine scelto."
                 )
-                st.dataframe(priority_df, hide_index=True, use_container_width=True)
+
+                st.dataframe(
+                    priority_df,
+                    hide_index=True,
+                    use_container_width=True,
+                )
+
                 st.bar_chart(
                     priority_df.set_index("Settore")[
                         ["Domanda (hm³)", "Acqua assegnata (hm³)"]
@@ -806,19 +986,33 @@ elif page == "Allocation Simulator":
 
             st.divider()
             st.subheader("4. Confronto tra strategie")
+
             comparison_sector_df = pd.DataFrame(
                 {
                     "Settore": SECTORS,
                     "Deficit proporzionale (hm³)": [
-                        round(max(0.0, demands[s] - proportional_allocations[s]), 2)
+                        round(
+                            max(
+                                0.0,
+                                demands[s] - proportional_allocations[s],
+                            ),
+                            2,
+                        )
                         for s in SECTORS
                     ],
                     "Deficit per priorità (hm³)": [
-                        round(max(0.0, demands[s] - priority_allocations[s]), 2)
+                        round(
+                            max(
+                                0.0,
+                                demands[s] - priority_allocations[s],
+                            ),
+                            2,
+                        )
                         for s in SECTORS
                     ],
                 }
             )
+
             st.dataframe(
                 comparison_sector_df,
                 hide_index=True,
@@ -829,14 +1023,23 @@ elif page == "Allocation Simulator":
                 max(0.0, demands[s] - proportional_allocations[s])
                 for s in SECTORS
             )
+
             total_priority_deficit = sum(
                 max(0.0, demands[s] - priority_allocations[s])
                 for s in SECTORS
             )
 
             a, b = st.columns(2)
-            a.metric("Deficit totale - proporzionale", f"{total_prop_deficit:.2f} hm³")
-            b.metric("Deficit totale - per priorità", f"{total_priority_deficit:.2f} hm³")
+
+            a.metric(
+                "Deficit totale - proporzionale",
+                f"{total_prop_deficit:.2f} hm³",
+            )
+
+            b.metric(
+                "Deficit totale - per priorità",
+                f"{total_priority_deficit:.2f} hm³",
+            )
 
             st.caption(
                 "Le strategie sono strumenti di confronto, non raccomandazioni "
@@ -844,33 +1047,42 @@ elif page == "Allocation Simulator":
                 "normativa, i vincoli fisici e le competenze delle autorità."
             )
 
+
 # ============================================================
 # 03 - IMPACT ANALYSIS
 # ============================================================
 
 elif page == "Impact Analysis":
+
     st.title("Impact Analysis")
+
     st.write(
         "Valutazione delle conseguenze sui settori produttivi, sugli usi civili "
         "e sul parametro ambientale ipotizzato nello scenario."
     )
+
     st.info(
         "PROTOTIPO — Gli indicatori sono calcolati sui parametri simulati "
         "inseriti nell'Allocation Simulator."
     )
 
     if total_minimum > availability + 1e-9:
+
         st.error(
             "Non è possibile elaborare un'analisi valida: le quote minime "
             "superano la disponibilità. Torna all'Allocation Simulator "
             "e modifica i parametri."
         )
+
     elif not priority_valid:
+
         st.error(
             "L'ordine delle priorità non è valido: ogni settore deve "
             "comparire una sola volta. Correggilo nell'Allocation Simulator."
         )
+
     else:
+
         selected_strategy = st.selectbox(
             "Scegli la strategia da analizzare",
             ["Allocazione proporzionale", "Allocazione per priorità"],
@@ -884,18 +1096,28 @@ elif page == "Impact Analysis":
         )
 
         analysis = build_analysis(
-            availability, demands, minimums, priority, strategy
+            availability,
+            demands,
+            minimums,
+            priority,
+            strategy,
         )
 
         st.divider()
         st.subheader("1. Quadro generale dello scenario")
+
         c1, c2, c3, c4 = st.columns(4)
+
         c1.metric("Disponibilità idrica", f"{availability:.1f} hm³")
         c2.metric("Acqua assegnata", f"{analysis['total_allocated']:.1f} hm³")
         c3.metric("Deficit complessivo", f"{analysis['total_shortage']:.1f} hm³")
         c4.metric("Domanda soddisfatta", f"{analysis['coverage']:.1f}%")
 
-        unused_water = max(0.0, availability - analysis["total_allocated"])
+        unused_water = max(
+            0.0,
+            availability - analysis["total_allocated"],
+        )
+
         if unused_water > 1e-6:
             st.caption(
                 f"Acqua non assegnata: {unused_water:.2f} hm³. "
@@ -904,14 +1126,29 @@ elif page == "Impact Analysis":
 
         st.divider()
         st.subheader("2. Impatto sui settori produttivi")
+
         st.write(
             "L'indicatore considera il volume di domanda non soddisfatto "
             "in agricoltura e industria."
         )
+
         e1, e2, e3 = st.columns(3)
-        e1.metric("Deficit agricoltura", f"{analysis['agricultural_shortage']:.2f} hm³")
-        e2.metric("Deficit industria", f"{analysis['industrial_shortage']:.2f} hm³")
-        e3.metric("Deficit produttivo", f"{analysis['productive_shortage']:.2f} hm³")
+
+        e1.metric(
+            "Deficit agricoltura",
+            f"{analysis['agricultural_shortage']:.2f} hm³",
+        )
+
+        e2.metric(
+            "Deficit industria",
+            f"{analysis['industrial_shortage']:.2f} hm³",
+        )
+
+        e3.metric(
+            "Deficit produttivo",
+            f"{analysis['productive_shortage']:.2f} hm³",
+        )
+
         st.caption(
             "Il deficit produttivo è un indicatore volumetrico. Non equivale "
             "a una perdita economica in euro: per stimarla servirebbero "
@@ -920,24 +1157,36 @@ elif page == "Impact Analysis":
 
         st.divider()
         st.subheader("3. Impatto sugli usi civili")
+
         s1, s2, s3 = st.columns(3)
+
         s1.metric("Domanda civile", f"{demands['Usi civili']:.2f} hm³")
+
         s2.metric(
             "Acqua assegnata",
             f"{analysis['allocations']['Usi civili']:.2f} hm³",
         )
-        s3.metric("Copertura civile", f"{analysis['civil_coverage']:.1f}%")
+
+        s3.metric(
+            "Copertura civile",
+            f"{analysis['civil_coverage']:.1f}%",
+        )
 
         st.write(
-            f"Deficit degli usi civili: **{analysis['civil_shortage']:.2f} hm³**"
+            f"Deficit degli usi civili: "
+            f"**{analysis['civil_shortage']:.2f} hm³**"
         )
+
         if analysis["civil_shortage"] > 1e-6:
+
             st.warning(
                 "La domanda civile inserita non è interamente soddisfatta. "
                 "Occorre verificare la tutela dei fabbisogni essenziali, "
                 "delle utenze vulnerabili e degli obblighi di servizio."
             )
+
         else:
+
             st.success(
                 "La domanda civile inserita nello scenario risulta interamente "
                 "soddisfatta. Questo risultato dipende dai parametri impostati."
@@ -945,15 +1194,19 @@ elif page == "Impact Analysis":
 
         st.divider()
         st.subheader("4. Parametro ambientale dello scenario")
+
         a1, a2, a3 = st.columns(3)
+
         a1.metric(
             "Quota minima ipotizzata",
             f"{analysis['environmental_minimum']:.2f} hm³",
         )
+
         a2.metric(
             "Acqua assegnata all'ambiente",
             f"{analysis['environmental_allocated']:.2f} hm³",
         )
+
         a3.metric(
             "Scostamento dalla quota minima",
             f"{analysis['environmental_constraint_gap']:.2f} hm³",
@@ -970,6 +1223,7 @@ elif page == "Impact Analysis":
 
         st.divider()
         st.subheader("5. Distribuzione degli impatti")
+
         st.dataframe(
             analysis["results_df"],
             hide_index=True,
@@ -977,6 +1231,7 @@ elif page == "Impact Analysis":
         )
 
         st.markdown("#### Domanda e acqua assegnata")
+
         st.bar_chart(
             analysis["results_df"].set_index("Settore")[
                 ["Domanda (hm³)", "Acqua assegnata (hm³)"]
@@ -984,17 +1239,20 @@ elif page == "Impact Analysis":
         )
 
         st.markdown("#### Distribuzione del deficit")
+
         st.bar_chart(
             analysis["results_df"].set_index("Settore")[["Deficit (hm³)"]]
         )
 
         st.divider()
         st.subheader("6. Sintesi dell'analisi")
+
         st.write(
             f"La strategia selezionata è **{selected_strategy.lower()}**. "
             f"Su una disponibilità di **{availability:.1f} hm³**, "
             f"il modello assegna **{analysis['total_allocated']:.1f} hm³**."
         )
+
         st.write(
             f"Il deficit complessivo è **{analysis['total_shortage']:.1f} hm³**. "
             f"Il deficit produttivo (agricoltura e industria) è "
@@ -1002,43 +1260,54 @@ elif page == "Impact Analysis":
             f"la copertura degli usi civili è "
             f"**{analysis['civil_coverage']:.1f}%**."
         )
+
         st.caption(
             "L'analisi organizza indicatori quantitativi e supporta il confronto "
             "tra scenari. Non formula decisioni automatiche né sostituisce "
             "le autorità competenti."
         )
 
+
 # ============================================================
 # 04 - DECISION REPORT
 # ============================================================
 
 elif page == "Decision Report":
+
     st.title("Decision Report")
+
     st.write(
         "Documento strutturato per organizzare i parametri, i risultati "
         "dell'allocazione, gli indicatori e il confronto tra strategie."
     )
+
     st.info(
         "Il report utilizza i parametri correnti dell'Allocation Simulator. "
         "I valori del prototipo sono simulati e non costituiscono dati ufficiali."
     )
 
     if total_minimum > availability + 1e-9:
+
         st.error(
             "Impossibile generare il report: le quote minime superano "
             "la disponibilità idrica. Correggi lo scenario nell'Allocation Simulator."
         )
+
     elif not priority_valid:
+
         st.error(
             "Impossibile generare il report: l'ordine delle priorità non è valido. "
             "Ogni settore deve comparire una sola volta nell'Allocation Simulator."
         )
+
     else:
+
         report_strategy_name = st.selectbox(
             "Strategia da approfondire nel report",
             ["Allocazione proporzionale", "Allocazione per priorità"],
             key="report_strategy",
         )
+
         report_strategy = (
             "proporzionale"
             if report_strategy_name == "Allocazione proporzionale"
@@ -1046,10 +1315,18 @@ elif page == "Decision Report":
         )
 
         report_analysis = build_analysis(
-            availability, demands, minimums, priority, report_strategy
+            availability,
+            demands,
+            minimums,
+            priority,
+            report_strategy,
         )
+
         proportional_analysis, priority_analysis, comparison_df = build_comparison(
-            availability, demands, minimums, priority
+            availability,
+            demands,
+            minimums,
+            priority,
         )
 
         st.caption(
@@ -1059,7 +1336,9 @@ elif page == "Decision Report":
 
         st.divider()
         st.subheader("1. Sintesi dello scenario")
+
         r1, r2, r3, r4 = st.columns(4)
+
         r1.metric("Disponibilità", f"{availability:.1f} hm³")
         r2.metric("Domanda totale", f"{report_analysis['total_demand']:.1f} hm³")
         r3.metric("Acqua assegnata", f"{report_analysis['total_allocated']:.1f} hm³")
@@ -1072,11 +1351,13 @@ elif page == "Decision Report":
 
         st.divider()
         st.subheader("2. Risultati dell'allocazione")
+
         st.dataframe(
             report_analysis["results_df"],
             hide_index=True,
             use_container_width=True,
         )
+
         st.bar_chart(
             report_analysis["results_df"].set_index("Settore")[
                 ["Domanda (hm³)", "Acqua assegnata (hm³)"]
@@ -1085,32 +1366,45 @@ elif page == "Decision Report":
 
         st.divider()
         st.subheader("3. Indicatori di impatto")
+
         impact1, impact2, impact3 = st.columns(3)
 
         with impact1:
+
             st.markdown("**Settori produttivi**")
+
             st.metric(
                 "Deficit produttivo",
                 f"{report_analysis['productive_shortage']:.2f} hm³",
             )
-            st.caption("Volume non soddisfatto in agricoltura e industria; non è una perdita in euro.")
+
+            st.caption(
+                "Volume non soddisfatto in agricoltura e industria; "
+                "non è una perdita in euro."
+            )
 
         with impact2:
+
             st.markdown("**Usi civili**")
+
             st.metric(
                 "Copertura civile",
                 f"{report_analysis['civil_coverage']:.1f}%",
             )
+
             st.caption(
                 f"Deficit: {report_analysis['civil_shortage']:.2f} hm³"
             )
 
         with impact3:
+
             st.markdown("**Parametro ambientale**")
+
             st.metric(
                 "Quota minima ipotizzata",
                 f"{report_analysis['environmental_minimum']:.2f} hm³",
             )
+
             st.caption(
                 f"Assegnata: {report_analysis['environmental_allocated']:.2f} hm³"
             )
@@ -1123,6 +1417,7 @@ elif page == "Decision Report":
 
         st.divider()
         st.subheader("4. Confronto tra strategie")
+
         st.dataframe(
             comparison_df,
             hide_index=True,
@@ -1131,6 +1426,7 @@ elif page == "Decision Report":
 
         st.divider()
         st.subheader("5. Considerazioni per la valutazione")
+
         st.write(
             f"La strategia approfondita è **{report_strategy_name.lower()}**. "
             f"Il deficit complessivo risultante è "
@@ -1138,19 +1434,27 @@ elif page == "Decision Report":
         )
 
         if report_analysis["civil_shortage"] > 1e-6:
+
             st.warning(
                 "La domanda civile inserita non è interamente soddisfatta. "
                 "È necessario approfondire la tutela dei fabbisogni essenziali."
             )
+
         else:
+
             st.info(
                 "La domanda civile inserita risulta interamente soddisfatta "
                 "nei limiti delle ipotesi del modello."
             )
 
         if report_strategy == "priorità":
-            st.write("**Ordine di priorità applicato:** " + " > ".join(priority))
+
+            st.write(
+                "**Ordine di priorità applicato:** " + " > ".join(priority)
+            )
+
         else:
+
             st.write(
                 "**Ordine di priorità:** non applicabile alla strategia "
                 "proporzionale."
@@ -1163,6 +1467,7 @@ elif page == "Decision Report":
 
         st.divider()
         st.subheader("6. Esportazione del documento")
+
         st.write(
             "Il PDF contiene sintesi, parametri, risultati settoriali, "
             "indicatori, confronto tra strategie e limiti del prototipo."
