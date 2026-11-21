@@ -9,7 +9,7 @@ st.set_page_config(
 )
 
 # =====================================================
-# CONFIGURAZIONE E STILE
+# CONFIGURAZIONE
 # =====================================================
 
 SECTORS = [
@@ -32,6 +32,10 @@ DEFAULT_MINIMUM = {
     "Industria": 5.0,
     "Ambiente": 15.0
 }
+
+# =====================================================
+# STILE
+# =====================================================
 
 st.markdown("""
 <style>
@@ -71,12 +75,43 @@ def proportional_allocation(availability, demands, minimums):
         for sector in SECTORS
     }
 
-    total_capacity = sum(capacities.values())
+    # Distribuzione proporzionale con ricalcolo
+    # delle quote quando un settore raggiunge il fabbisogno.
 
-    if remaining > 0 and total_capacity > 0:
-        for sector in SECTORS:
-            extra = remaining * capacities[sector] / total_capacity
-            allocations[sector] += min(extra, capacities[sector])
+    active_sectors = [
+        sector for sector in SECTORS
+        if capacities[sector] > 0
+    ]
+
+    while remaining > 0.000001 and active_sectors:
+
+        total_capacity = sum(
+            capacities[sector] for sector in active_sectors
+        )
+
+        if total_capacity <= 0:
+            break
+
+        distributed = 0.0
+        next_active = []
+
+        for sector in active_sectors:
+
+            share = remaining * capacities[sector] / total_capacity
+            extra = min(share, capacities[sector])
+
+            allocations[sector] += extra
+            capacities[sector] -= extra
+            distributed += extra
+
+            if capacities[sector] > 0.000001:
+                next_active.append(sector)
+
+        remaining -= distributed
+        active_sectors = next_active
+
+        if distributed <= 0.000001:
+            break
 
     return allocations
 
@@ -87,11 +122,19 @@ def priority_allocation(availability, demands, minimums, priority):
     remaining = availability - sum(allocations.values())
 
     for sector in priority:
-        capacity = max(0, demands[sector] - allocations[sector])
+
+        capacity = max(
+            0,
+            demands[sector] - allocations[sector]
+        )
+
         extra = min(remaining, capacity)
 
         allocations[sector] += extra
         remaining -= extra
+
+        if remaining <= 0:
+            break
 
     return allocations
 
@@ -101,6 +144,7 @@ def calculate_results(demands, allocations):
     rows = []
 
     for sector in SECTORS:
+
         demand = demands[sector]
         allocated = allocations[sector]
         shortage = max(0, demand - allocated)
@@ -112,7 +156,7 @@ def calculate_results(demands, allocations):
 
         rows.append({
             "Settore": sector,
-            "Domanda (hm³)": demand,
+            "Domanda (hm³)": round(demand, 2),
             "Acqua assegnata (hm³)": round(allocated, 2),
             "Deficit (hm³)": round(shortage, 2),
             "Fabbisogno soddisfatto (%)": round(satisfaction, 1)
@@ -236,14 +280,30 @@ elif page == "Allocation Simulator":
         "non soglie normative ufficiali."
     )
 
+    # INIZIALIZZAZIONE DELLO STATO DEI WIDGET
+
+    if "availability" not in st.session_state:
+        st.session_state.availability = 100.0
+
+    for sector in SECTORS:
+
+        demand_key = f"demand_{sector}"
+        minimum_key = f"minimum_{sector}"
+
+        if demand_key not in st.session_state:
+            st.session_state[demand_key] = DEFAULT_DEMAND[sector]
+
+        if minimum_key not in st.session_state:
+            st.session_state[minimum_key] = DEFAULT_MINIMUM[sector]
+
     st.subheader("1. Parametri dello scenario")
 
     availability = st.number_input(
         "Disponibilità idrica totale (hm³)",
         min_value=0.0,
         max_value=1000.0,
-        value=100.0,
-        step=5.0
+        step=5.0,
+        key="availability"
     )
 
     st.markdown("#### Fabbisogni e quote minime")
@@ -259,15 +319,22 @@ elif page == "Allocation Simulator":
 
     for sector in SECTORS:
 
+        demand_key = f"demand_{sector}"
+        minimum_key = f"minimum_{sector}"
+
+        if st.session_state[minimum_key] > st.session_state[demand_key]:
+            st.session_state[minimum_key] = st.session_state[demand_key]
+
         cols = st.columns([2, 1, 1])
+
+        cols[0].write(sector)
 
         demands[sector] = cols[1].number_input(
             f"Domanda {sector}",
             min_value=0.0,
             max_value=1000.0,
-            value=DEFAULT_DEMAND[sector],
             step=1.0,
-            key=f"demand_{sector}",
+            key=demand_key,
             label_visibility="collapsed"
         )
 
@@ -275,16 +342,10 @@ elif page == "Allocation Simulator":
             f"Minimo {sector}",
             min_value=0.0,
             max_value=demands[sector],
-            value=min(
-                DEFAULT_MINIMUM[sector],
-                demands[sector]
-            ),
             step=1.0,
-            key=f"minimum_{sector}",
+            key=minimum_key,
             label_visibility="collapsed"
         )
-
-        cols[0].write(sector)
 
     total_demand = sum(demands.values())
     total_minimum = sum(minimums.values())
@@ -296,8 +357,6 @@ elif page == "Allocation Simulator":
     m1.metric("Disponibilità", f"{availability:.1f} hm³")
     m2.metric("Domanda totale", f"{total_demand:.1f} hm³")
     m3.metric("Quote minime richieste", f"{total_minimum:.1f} hm³")
-
-    # Verifica di fattibilità dei vincoli
 
     if total_minimum > availability:
 
@@ -353,15 +412,8 @@ elif page == "Allocation Simulator":
             priority
         )
 
-        prop_df = calculate_results(
-            demands,
-            proportional
-        )
-
-        priority_df = calculate_results(
-            demands,
-            priority_result
-        )
+        prop_df = calculate_results(demands, proportional)
+        priority_df = calculate_results(demands, priority_result)
 
         tab1, tab2 = st.tabs([
             "Allocazione proporzionale",
@@ -419,15 +471,11 @@ elif page == "Allocation Simulator":
         comparison = pd.DataFrame({
             "Settore": SECTORS,
             "Deficit proporzionale (hm³)": [
-                round(
-                    max(0, demands[s] - proportional[s]), 2
-                )
+                round(max(0, demands[s] - proportional[s]), 2)
                 for s in SECTORS
             ],
             "Deficit per priorità (hm³)": [
-                round(
-                    max(0, demands[s] - priority_result[s]), 2
-                )
+                round(max(0, demands[s] - priority_result[s]), 2)
                 for s in SECTORS
             ]
         })
