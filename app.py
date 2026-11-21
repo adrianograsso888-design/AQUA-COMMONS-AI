@@ -1,3 +1,4 @@
+
 import streamlit as st
 import pandas as pd
 from datetime import datetime
@@ -556,6 +557,11 @@ priority_valid = (
     and len(set(priority)) == len(SECTORS)
     and set(priority) == set(SECTORS)
 )
+
+# Totali condivisi: disponibili in tutte le pagine.
+# Streamlit riesegue lo script a ogni cambio di pagina.
+total_demand = sum(demands.values())
+total_minimum = sum(minimums.values())
 
 # ============================================================
 # NAVIGAZIONE
