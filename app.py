@@ -1,6 +1,20 @@
 
 import streamlit as st
 import pandas as pd
+from datetime import datetime
+from io import BytesIO
+
+from reportlab.lib import colors
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.units import cm
+from reportlab.platypus import (
+    SimpleDocTemplate,
+    Paragraph,
+    Spacer,
+    Table,
+    TableStyle
+)
 
 st.set_page_config(
     page_title="AQUA COMMONS AI",
@@ -176,8 +190,356 @@ def get_scenario(availability, demands, minimums, priority, strategy):
     return calculate_results(demands, allocations), allocations
 
 
+def build_analysis(availability, demands, minimums, priority, strategy):
+
+    results_df, allocations = get_scenario(
+        availability,
+        demands,
+        minimums,
+        priority,
+        strategy
+    )
+
+    total_demand = sum(demands.values())
+    total_minimum = sum(minimums.values())
+    total_allocated = sum(allocations.values())
+
+    total_shortage = sum(
+        max(0, demands[s] - allocations[s])
+        for s in SECTORS
+    )
+
+    coverage = (
+        total_allocated / total_demand * 100
+        if total_demand > 0 else 100
+    )
+
+    agricultural_shortage = max(
+        0,
+        demands["Agricoltura"] - allocations["Agricoltura"]
+    )
+
+    industrial_shortage = max(
+        0,
+        demands["Industria"] - allocations["Industria"]
+    )
+
+    civil_shortage = max(
+        0,
+        demands["Usi civili"] - allocations["Usi civili"]
+    )
+
+    civil_coverage = (
+        allocations["Usi civili"] / demands["Usi civili"] * 100
+        if demands["Usi civili"] > 0 else 100
+    )
+
+    environmental_minimum = minimums["Ambiente"]
+
+    environmental_shortage = max(
+        0,
+        environmental_minimum - allocations["Ambiente"]
+    )
+
+    environmental_coverage = (
+        allocations["Ambiente"] / environmental_minimum * 100
+        if environmental_minimum > 0 else 100
+    )
+
+    results_df["Quota del deficit totale (%)"] = results_df[
+        "Deficit (hm³)"
+    ].apply(
+        lambda value: round(
+            value / total_shortage * 100, 1
+        ) if total_shortage > 0 else 0
+    )
+
+    return {
+        "results_df": results_df,
+        "allocations": allocations,
+        "total_demand": total_demand,
+        "total_minimum": total_minimum,
+        "total_allocated": total_allocated,
+        "total_shortage": total_shortage,
+        "coverage": coverage,
+        "agricultural_shortage": agricultural_shortage,
+        "industrial_shortage": industrial_shortage,
+        "productive_shortage": (
+            agricultural_shortage + industrial_shortage
+        ),
+        "civil_shortage": civil_shortage,
+        "civil_coverage": civil_coverage,
+        "environmental_minimum": environmental_minimum,
+        "environmental_shortage": environmental_shortage,
+        "environmental_coverage": environmental_coverage
+    }
+
+
 # =====================================================
-# 4. NAVIGAZIONE
+# 4. GENERAZIONE DEL REPORT PDF
+# =====================================================
+
+def generate_pdf_report(analysis, availability, demands,
+                        minimums, strategy_name, priority):
+
+    buffer = BytesIO()
+
+    document = SimpleDocTemplate(
+        buffer,
+        pagesize=A4,
+        rightMargin=1.7 * cm,
+        leftMargin=1.7 * cm,
+        topMargin=1.7 * cm,
+        bottomMargin=1.7 * cm
+    )
+
+    styles = getSampleStyleSheet()
+
+    title_style = ParagraphStyle(
+        "CustomTitle",
+        parent=styles["Title"],
+        textColor=colors.HexColor("#123B56"),
+        fontSize=22,
+        spaceAfter=12
+    )
+
+    heading_style = ParagraphStyle(
+        "CustomHeading",
+        parent=styles["Heading2"],
+        textColor=colors.HexColor("#123B56"),
+        fontSize=13,
+        spaceBefore=14,
+        spaceAfter=8
+    )
+
+    normal_style = styles["BodyText"]
+
+    elements = []
+
+    date_text = datetime.now().strftime("%d/%m/%Y %H:%M")
+
+    elements.append(
+        Paragraph("AQUA COMMONS AI", title_style)
+    )
+
+    elements.append(
+        Paragraph("DECISION REPORT — ANALISI DELLO SCENARIO", styles["Heading2"])
+    )
+
+    elements.append(
+        Paragraph(f"Data di generazione: {date_text}", normal_style)
+    )
+
+    elements.append(Spacer(1, 12))
+
+    elements.append(
+        Paragraph("1. Sintesi dello scenario", heading_style)
+    )
+
+    summary_data = [
+        ["Indicatore", "Valore"],
+        ["Territorio di riferimento", "Bacino Brenta–Bacchiglione"],
+        ["Disponibilità idrica", f"{availability:.2f} hm³"],
+        ["Domanda complessiva", f"{analysis['total_demand']:.2f} hm³"],
+        ["Quote minime richieste", f"{analysis['total_minimum']:.2f} hm³"],
+        ["Strategia analizzata", strategy_name],
+        ["Acqua assegnata", f"{analysis['total_allocated']:.2f} hm³"],
+        ["Deficit complessivo", f"{analysis['total_shortage']:.2f} hm³"],
+        ["Copertura della domanda", f"{analysis['coverage']:.1f}%"]
+    ]
+
+    summary_table = Table(
+        summary_data,
+        colWidths=[8 * cm, 8 * cm]
+    )
+
+    summary_table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#123B56")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#D5DEE6")),
+        ("BACKGROUND", (0, 1), (-1, -1), colors.white),
+        ("PADDING", (0, 0), (-1, -1), 7),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE")
+    ]))
+
+    elements.append(summary_table)
+
+    elements.append(
+        Paragraph("2. Parametri e fabbisogni settoriali", heading_style)
+    )
+
+    demand_data = [
+        ["Settore", "Domanda", "Quota minima"]
+    ]
+
+    for sector in SECTORS:
+        demand_data.append([
+            sector,
+            f"{demands[sector]:.2f} hm³",
+            f"{minimums[sector]:.2f} hm³"
+        ])
+
+    demand_table = Table(
+        demand_data,
+        colWidths=[6 * cm, 5 * cm, 5 * cm]
+    )
+
+    demand_table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#123B56")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#D5DEE6")),
+        ("PADDING", (0, 0), (-1, -1), 7)
+    ]))
+
+    elements.append(demand_table)
+
+    elements.append(
+        Paragraph("3. Risultati dell'allocazione", heading_style)
+    )
+
+    allocation_data = [[
+        "Settore",
+        "Assegnata",
+        "Deficit",
+        "Soddisfatto"
+    ]]
+
+    for _, row in analysis["results_df"].iterrows():
+        allocation_data.append([
+            row["Settore"],
+            f"{row['Acqua assegnata (hm³)']:.2f} hm³",
+            f"{row['Deficit (hm³)']:.2f} hm³",
+            f"{row['Fabbisogno soddisfatto (%)']:.1f}%"
+        ])
+
+    allocation_table = Table(
+        allocation_data,
+        colWidths=[4.5 * cm, 4 * cm, 4 * cm, 4 * cm]
+    )
+
+    allocation_table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#123B56")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#D5DEE6")),
+        ("PADDING", (0, 0), (-1, -1), 6)
+    ]))
+
+    elements.append(allocation_table)
+
+    elements.append(
+        Paragraph("4. Analisi degli impatti", heading_style)
+    )
+
+    impact_data = [
+        ["Dimensione", "Indicatore", "Risultato"],
+        [
+            "Economica",
+            "Deficit produttivo",
+            f"{analysis['productive_shortage']:.2f} hm³"
+        ],
+        [
+            "Sociale",
+            "Deficit usi civili",
+            f"{analysis['civil_shortage']:.2f} hm³"
+        ],
+        [
+            "Sociale",
+            "Copertura usi civili",
+            f"{analysis['civil_coverage']:.1f}%"
+        ],
+        [
+            "Ambientale",
+            "Quota minima ipotizzata",
+            f"{analysis['environmental_minimum']:.2f} hm³"
+        ],
+        [
+            "Ambientale",
+            "Copertura quota minima",
+            f"{analysis['environmental_coverage']:.1f}%"
+        ]
+    ]
+
+    impact_table = Table(
+        impact_data,
+        colWidths=[4 * cm, 7 * cm, 5 * cm]
+    )
+
+    impact_table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#123B56")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#D5DEE6")),
+        ("PADDING", (0, 0), (-1, -1), 6)
+    ]))
+
+    elements.append(impact_table)
+
+    elements.append(
+        Paragraph("5. Priorità impostate", heading_style)
+    )
+
+    elements.append(
+        Paragraph(
+            " → ".join(priority),
+            normal_style
+        )
+    )
+
+    elements.append(
+        Paragraph("6. Considerazioni e limiti", heading_style)
+    )
+
+    elements.append(
+        Paragraph(
+            "Il presente documento è generato da un prototipo "
+            "dimostrativo. I valori utilizzati sono simulati e "
+            "non costituiscono misurazioni ufficiali del bacino "
+            "Brenta–Bacchiglione.",
+            normal_style
+        )
+    )
+
+    elements.append(Spacer(1, 6))
+
+    elements.append(
+        Paragraph(
+            "Il deficit produttivo rappresenta il volume di "
+            "domanda non soddisfatto in agricoltura e industria. "
+            "Non equivale a una perdita economica monetaria.",
+            normal_style
+        )
+    )
+
+    elements.append(Spacer(1, 6))
+
+    elements.append(
+        Paragraph(
+            "La quota ambientale è un'ipotesi dello scenario e "
+            "non sostituisce la verifica del deflusso ecologico "
+            "e degli obblighi normativi applicabili.",
+            normal_style
+        )
+    )
+
+    elements.append(Spacer(1, 6))
+
+    elements.append(
+        Paragraph(
+            "Il report supporta la valutazione delle alternative "
+            "e non costituisce una decisione automatica. "
+            "La decisione finale compete alle autorità responsabili.",
+            normal_style
+        )
+    )
+
+    document.build(elements)
+
+    buffer.seek(0)
+
+    return buffer.getvalue()
+
+
+# =====================================================
+# 5. NAVIGAZIONE
 # =====================================================
 
 st.sidebar.title("💧 AQUA COMMONS AI")
@@ -202,7 +564,7 @@ st.sidebar.caption("PROTOTIPO DIMOSTRATIVO")
 
 
 # =====================================================
-# 5. STATO CONDIVISO DEI PARAMETRI
+# 6. STATO CONDIVISO
 # =====================================================
 
 if "availability" not in st.session_state:
@@ -218,6 +580,38 @@ for sector in SECTORS:
 
     if minimum_key not in st.session_state:
         st.session_state[minimum_key] = DEFAULT_MINIMUM[sector]
+
+
+# Recupero dei parametri correnti
+
+availability = st.session_state.availability
+
+demands = {
+    sector: st.session_state[f"demand_{sector}"]
+    for sector in SECTORS
+}
+
+minimums = {
+    sector: st.session_state[f"minimum_{sector}"]
+    for sector in SECTORS
+}
+
+total_demand = sum(demands.values())
+total_minimum = sum(minimums.values())
+
+
+# Recupero delle priorità
+
+priority = []
+
+for i in range(4):
+    key = f"priority_{i}"
+
+    if key in st.session_state:
+        priority.append(st.session_state[key])
+
+if len(priority) != 4 or len(set(priority)) != 4:
+    priority = SECTORS.copy()
 
 
 # =====================================================
@@ -240,12 +634,12 @@ if page == "Water Dashboard":
     )
 
     available = 100.0
-    total_demand = sum(DEFAULT_DEMAND.values())
-    deficit = max(0, total_demand - available)
+    dashboard_demand = sum(DEFAULT_DEMAND.values())
+    deficit = max(0, dashboard_demand - available)
 
     coverage = (
-        available / total_demand * 100
-        if total_demand > 0 else 0
+        available / dashboard_demand * 100
+        if dashboard_demand > 0 else 0
     )
 
     st.subheader("Indicatori principali")
@@ -535,23 +929,6 @@ elif page == "Impact Analysis":
         "sui parametri simulati inseriti nell'Allocation Simulator."
     )
 
-    # Recupero dei parametri condivisi
-
-    availability = st.session_state.availability
-
-    demands = {
-        sector: st.session_state[f"demand_{sector}"]
-        for sector in SECTORS
-    }
-
-    minimums = {
-        sector: st.session_state[f"minimum_{sector}"]
-        for sector in SECTORS
-    }
-
-    total_demand = sum(demands.values())
-    total_minimum = sum(minimums.values())
-
     if total_minimum > availability:
 
         st.error(
@@ -561,19 +938,6 @@ elif page == "Impact Analysis":
         )
 
     else:
-
-        # Recupero delle priorità
-
-        priority = []
-
-        for i in range(4):
-            key = f"priority_{i}"
-
-            if key in st.session_state:
-                priority.append(st.session_state[key])
-
-        if len(priority) != 4 or len(set(priority)) != 4:
-            priority = SECTORS.copy()
 
         st.subheader("1. Selezione dello scenario")
 
@@ -592,26 +956,12 @@ elif page == "Impact Analysis":
             else "priorità"
         )
 
-        impact_df, allocations = get_scenario(
+        analysis = build_analysis(
             availability,
             demands,
             minimums,
             priority,
             strategy
-        )
-
-        # Indicatori generali
-
-        total_allocated = sum(allocations.values())
-
-        total_shortage = sum(
-            max(0, demands[s] - allocations[s])
-            for s in SECTORS
-        )
-
-        coverage = (
-            total_allocated / total_demand * 100
-            if total_demand > 0 else 100
         )
 
         st.divider()
@@ -620,25 +970,10 @@ elif page == "Impact Analysis":
 
         c1, c2, c3, c4 = st.columns(4)
 
-        c1.metric(
-            "Disponibilità idrica",
-            f"{availability:.1f} hm³"
-        )
-
-        c2.metric(
-            "Acqua assegnata",
-            f"{total_allocated:.1f} hm³"
-        )
-
-        c3.metric(
-            "Deficit complessivo",
-            f"{total_shortage:.1f} hm³"
-        )
-
-        c4.metric(
-            "Domanda soddisfatta",
-            f"{coverage:.1f}%"
-        )
+        c1.metric("Disponibilità idrica", f"{availability:.1f} hm³")
+        c2.metric("Acqua assegnata", f"{analysis['total_allocated']:.1f} hm³")
+        c3.metric("Deficit complessivo", f"{analysis['total_shortage']:.1f} hm³")
+        c4.metric("Domanda soddisfatta", f"{analysis['coverage']:.1f}%")
 
         st.caption(
             "L'acqua eventualmente non assegnata corrisponde "
@@ -647,8 +982,6 @@ elif page == "Impact Analysis":
 
         st.divider()
 
-        # IMPATTO ECONOMICO
-
         st.subheader("3. Impatto economico")
 
         st.write(
@@ -656,84 +989,48 @@ elif page == "Impact Analysis":
             "settori produttivi: agricoltura e industria."
         )
 
-        agricultural_shortage = max(
-            0,
-            demands["Agricoltura"] - allocations["Agricoltura"]
-        )
-
-        industrial_shortage = max(
-            0,
-            demands["Industria"] - allocations["Industria"]
-        )
-
-        productive_shortage = (
-            agricultural_shortage + industrial_shortage
-        )
-
         e1, e2, e3 = st.columns(3)
 
         e1.metric(
             "Deficit agricoltura",
-            f"{agricultural_shortage:.2f} hm³"
+            f"{analysis['agricultural_shortage']:.2f} hm³"
         )
 
         e2.metric(
             "Deficit industria",
-            f"{industrial_shortage:.2f} hm³"
+            f"{analysis['industrial_shortage']:.2f} hm³"
         )
 
         e3.metric(
             "Deficit produttivo",
-            f"{productive_shortage:.2f} hm³"
+            f"{analysis['productive_shortage']:.2f} hm³"
         )
 
         st.caption(
             "Il deficit produttivo misura il volume di domanda "
-            "non soddisfatto nei due settori. Non equivale "
-            "direttamente a una perdita economica in euro."
+            "non soddisfatto. Non equivale direttamente a una "
+            "perdita economica in euro."
         )
 
         st.divider()
 
-        # IMPATTO SOCIALE
-
         st.subheader("4. Impatto sociale")
-
-        civil_demand = demands["Usi civili"]
-        civil_allocated = allocations["Usi civili"]
-
-        civil_shortage = max(
-            0,
-            civil_demand - civil_allocated
-        )
-
-        civil_coverage = (
-            civil_allocated / civil_demand * 100
-            if civil_demand > 0 else 100
-        )
 
         s1, s2, s3 = st.columns(3)
 
-        s1.metric(
-            "Domanda civile",
-            f"{civil_demand:.2f} hm³"
-        )
-
+        s1.metric("Domanda civile", f"{demands['Usi civili']:.2f} hm³")
         s2.metric(
             "Acqua assegnata",
-            f"{civil_allocated:.2f} hm³"
+            f"{analysis['allocations']['Usi civili']:.2f} hm³"
         )
-
-        s3.metric(
-            "Copertura civile",
-            f"{civil_coverage:.1f}%"
-        )
+        s3.metric("Copertura civile", f"{analysis['civil_coverage']:.1f}%")
 
         st.write(
-            f"Deficit degli usi civili: **{civil_shortage:.2f} hm³**"
+            f"Deficit degli usi civili: "
+            f"**{analysis['civil_shortage']:.2f} hm³**"
         )
 
-        if civil_shortage > 0:
+        if analysis["civil_shortage"] > 0:
             st.warning(
                 "La domanda civile non è interamente soddisfatta. "
                 "È necessario verificare la tutela dei fabbisogni "
@@ -747,41 +1044,26 @@ elif page == "Impact Analysis":
 
         st.divider()
 
-        # IMPATTO AMBIENTALE
-
         st.subheader("5. Impatto ambientale")
-
-        environmental_minimum = minimums["Ambiente"]
-        environmental_allocated = allocations["Ambiente"]
-
-        environmental_shortage = max(
-            0,
-            environmental_minimum - environmental_allocated
-        )
-
-        environmental_coverage = (
-            environmental_allocated / environmental_minimum * 100
-            if environmental_minimum > 0 else 100
-        )
 
         a1, a2, a3 = st.columns(3)
 
         a1.metric(
             "Quota minima ipotizzata",
-            f"{environmental_minimum:.2f} hm³"
+            f"{analysis['environmental_minimum']:.2f} hm³"
         )
 
         a2.metric(
             "Acqua assegnata",
-            f"{environmental_allocated:.2f} hm³"
+            f"{analysis['allocations']['Ambiente']:.2f} hm³"
         )
 
         a3.metric(
             "Copertura quota minima",
-            f"{environmental_coverage:.1f}%"
+            f"{analysis['environmental_coverage']:.1f}%"
         )
 
-        if environmental_shortage > 0:
+        if analysis["environmental_shortage"] > 0:
             st.error(
                 "La quota minima ambientale impostata "
                 "non risulta rispettata."
@@ -794,71 +1076,61 @@ elif page == "Impact Analysis":
 
         st.caption(
             "La quota ambientale è un'ipotesi dimostrativa "
-            "del modello e non sostituisce il calcolo del "
-            "deflusso ecologico o la verifica degli obblighi normativi."
+            "e non sostituisce il calcolo del deflusso ecologico "
+            "o la verifica degli obblighi normativi."
         )
 
         st.divider()
 
-        # CONFRONTO TRA SETTORI
-
         st.subheader("6. Distribuzione degli impatti")
 
-        impact_df["Quota del deficit totale (%)"] = impact_df[
-            "Deficit (hm³)"
-        ].apply(
-            lambda value: round(
-                value / total_shortage * 100, 1
-            ) if total_shortage > 0 else 0
-        )
-
         st.dataframe(
-            impact_df,
+            analysis["results_df"],
             hide_index=True,
             use_container_width=True
         )
 
         st.markdown("#### Domanda e acqua assegnata")
 
-        chart_df = impact_df.set_index("Settore")[
-            ["Domanda (hm³)", "Acqua assegnata (hm³)"]
-        ]
-
-        st.bar_chart(chart_df)
+        st.bar_chart(
+            analysis["results_df"].set_index("Settore")[
+                ["Domanda (hm³)", "Acqua assegnata (hm³)"]
+            ]
+        )
 
         st.markdown("#### Distribuzione del deficit")
 
-        shortage_df = impact_df.set_index("Settore")[
-            ["Deficit (hm³)"]
-        ]
-
-        st.bar_chart(shortage_df)
+        st.bar_chart(
+            analysis["results_df"].set_index("Settore")[
+                ["Deficit (hm³)"]
+            ]
+        )
 
         st.divider()
-
-        # SINTESI
 
         st.subheader("7. Sintesi dell'analisi")
 
         st.write(
             f"La strategia selezionata è **{selected_strategy.lower()}**. "
             f"Su una disponibilità di **{availability:.1f} hm³**, "
-            f"sono stati assegnati **{total_allocated:.1f} hm³**."
+            f"sono stati assegnati "
+            f"**{analysis['total_allocated']:.1f} hm³**."
         )
 
         st.write(
-            f"Il deficit complessivo è pari a **{total_shortage:.1f} hm³**. "
+            f"Il deficit complessivo è pari a "
+            f"**{analysis['total_shortage']:.1f} hm³**. "
             f"Il settore agricolo presenta un deficit di "
-            f"**{agricultural_shortage:.2f} hm³**, mentre quello "
-            f"industriale presenta un deficit di "
-            f"**{industrial_shortage:.2f} hm³**."
+            f"**{analysis['agricultural_shortage']:.2f} hm³**, "
+            f"mentre quello industriale presenta un deficit di "
+            f"**{analysis['industrial_shortage']:.2f} hm³**."
         )
 
         st.write(
             f"Gli usi civili presentano una copertura del "
-            f"**{civil_coverage:.1f}%**. La quota minima ambientale "
-            f"impostata risulta "
-            f"{'rispettata' if environmental_shortage == 0 else 'non rispettata'}."
+            f"**{analysis['civil_coverage']:.1f}%**. "
+            f"La quota minima ambientale impostata risulta "
+            f"{'rispettata' if analysis['environmental_shortage'] == 0 else 'non rispettata'}."
         )
 
         st.caption(
@@ -877,12 +1149,261 @@ elif page == "Decision Report":
     st.title("Decision Report")
 
     st.write(
-        "Organizzazione dei risultati e preparazione "
-        "di un report a supporto delle decisioni pubbliche."
+        "Generazione di un documento strutturato che "
+        "organizza i risultati della simulazione e "
+        "dell'analisi d'impatto."
     )
 
     st.info(
-        "Modulo in fase di sviluppo. "
-        "Sarà collegato ai risultati delle simulazioni "
-        "e dell'Impact Analysis."
+        "Il report viene generato utilizzando i parametri "
+        "e i risultati effettivi dello scenario selezionato. "
+        "I dati del prototipo sono simulati."
     )
+
+    if total_minimum > availability:
+
+        st.error(
+            "Impossibile generare il report: le quote minime "
+            "superano la disponibilità idrica. "
+            "Correggi lo scenario nell'Allocation Simulator."
+        )
+
+    else:
+
+        st.subheader("1. Configurazione del report")
+
+        report_strategy_name = st.selectbox(
+            "Strategia da inserire nel report",
+            [
+                "Allocazione proporzionale",
+                "Allocazione per priorità"
+            ],
+            key="report_strategy"
+        )
+
+        report_strategy = (
+            "proporzionale"
+            if report_strategy_name == "Allocazione proporzionale"
+            else "priorità"
+        )
+
+        report_analysis = build_analysis(
+            availability,
+            demands,
+            minimums,
+            priority,
+            report_strategy
+        )
+
+        st.caption(
+            "Il report utilizza i parametri correnti "
+            "dell'Allocation Simulator."
+        )
+
+        st.divider()
+
+        st.subheader("2. Sintesi dello scenario")
+
+        r1, r2, r3, r4 = st.columns(4)
+
+        r1.metric(
+            "Disponibilità",
+            f"{availability:.1f} hm³"
+        )
+
+        r2.metric(
+            "Domanda totale",
+            f"{report_analysis['total_demand']:.1f} hm³"
+        )
+
+        r3.metric(
+            "Acqua assegnata",
+            f"{report_analysis['total_allocated']:.1f} hm³"
+        )
+
+        r4.metric(
+            "Deficit complessivo",
+            f"{report_analysis['total_shortage']:.1f} hm³"
+        )
+
+        st.write(f"**Territorio:** Bacino Brenta–Bacchiglione")
+        st.write(f"**Strategia:** {report_strategy_name}")
+        st.write(
+            f"**Copertura complessiva:** "
+            f"{report_analysis['coverage']:.1f}%"
+        )
+
+        st.divider()
+
+        st.subheader("3. Risultati dell'allocazione")
+
+        st.dataframe(
+            report_analysis["results_df"],
+            hide_index=True,
+            use_container_width=True
+        )
+
+        st.bar_chart(
+            report_analysis["results_df"].set_index("Settore")[
+                ["Domanda (hm³)", "Acqua assegnata (hm³)"]
+            ]
+        )
+
+        st.divider()
+
+        st.subheader("4. Valutazione degli impatti")
+
+        impact1, impact2, impact3 = st.columns(3)
+
+        with impact1:
+            st.markdown("**Economico**")
+            st.metric(
+                "Deficit produttivo",
+                f"{report_analysis['productive_shortage']:.2f} hm³"
+            )
+            st.caption("Agricoltura e industria")
+
+        with impact2:
+            st.markdown("**Sociale**")
+            st.metric(
+                "Copertura civile",
+                f"{report_analysis['civil_coverage']:.1f}%"
+            )
+            st.caption(
+                f"Deficit: {report_analysis['civil_shortage']:.2f} hm³"
+            )
+
+        with impact3:
+            st.markdown("**Ambientale**")
+            st.metric(
+                "Copertura quota minima",
+                f"{report_analysis['environmental_coverage']:.1f}%"
+            )
+            st.caption(
+                f"Quota ipotizzata: "
+                f"{report_analysis['environmental_minimum']:.2f} hm³"
+            )
+
+        st.divider()
+
+        st.subheader("5. Confronto tra strategie")
+
+        proportional_analysis = build_analysis(
+            availability,
+            demands,
+            minimums,
+            priority,
+            "proporzionale"
+        )
+
+        priority_analysis = build_analysis(
+            availability,
+            demands,
+            minimums,
+            priority,
+            "priorità"
+        )
+
+        comparison_df = pd.DataFrame({
+            "Indicatore": [
+                "Acqua assegnata (hm³)",
+                "Deficit complessivo (hm³)",
+                "Deficit agricolo (hm³)",
+                "Deficit usi civili (hm³)",
+                "Deficit industria (hm³)",
+                "Copertura domanda (%)"
+            ],
+            "Proporzionale": [
+                round(proportional_analysis["total_allocated"], 2),
+                round(proportional_analysis["total_shortage"], 2),
+                round(proportional_analysis["agricultural_shortage"], 2),
+                round(proportional_analysis["civil_shortage"], 2),
+                round(proportional_analysis["industrial_shortage"], 2),
+                round(proportional_analysis["coverage"], 1)
+            ],
+            "Per priorità": [
+                round(priority_analysis["total_allocated"], 2),
+                round(priority_analysis["total_shortage"], 2),
+                round(priority_analysis["agricultural_shortage"], 2),
+                round(priority_analysis["civil_shortage"], 2),
+                round(priority_analysis["industrial_shortage"], 2),
+                round(priority_analysis["coverage"], 1)
+            ]
+        })
+
+        st.dataframe(
+            comparison_df,
+            hide_index=True,
+            use_container_width=True
+        )
+
+        st.divider()
+
+        st.subheader("6. Considerazioni per la decisione")
+
+        st.write(
+            f"La strategia selezionata è **{report_strategy_name.lower()}**. "
+            f"Il deficit complessivo dello scenario è pari a "
+            f"**{report_analysis['total_shortage']:.2f} hm³**."
+        )
+
+        if report_analysis["civil_shortage"] > 0:
+            st.warning(
+                "Attenzione: la domanda civile non è interamente "
+                "soddisfatta. Occorre approfondire la tutela "
+                "dei fabbisogni essenziali."
+            )
+        else:
+            st.success(
+                "La domanda civile inserita nello scenario "
+                "risulta interamente soddisfatta."
+            )
+
+        if report_analysis["environmental_shortage"] > 0:
+            st.error(
+                "La quota minima ambientale ipotizzata "
+                "non risulta rispettata."
+            )
+        else:
+            st.success(
+                "La quota minima ambientale ipotizzata "
+                "risulta rispettata."
+            )
+
+        st.caption(
+            "Le considerazioni sono indicatori di supporto, "
+            "non raccomandazioni automatiche. La valutazione "
+            "finale spetta alle autorità competenti."
+        )
+
+        st.divider()
+
+        st.subheader("7. Generazione del documento")
+
+        st.write(
+            "Puoi esportare i risultati dello scenario "
+            "in un documento PDF strutturato."
+        )
+
+        pdf_bytes = generate_pdf_report(
+            report_analysis,
+            availability,
+            demands,
+            minimums,
+            report_strategy_name,
+            priority
+        )
+
+        st.download_button(
+            label="📄 Scarica Decision Report in PDF",
+            data=pdf_bytes,
+            file_name="AQUA_COMMONS_AI_Decision_Report.pdf",
+            mime="application/pdf",
+            use_container_width=True
+        )
+
+        st.caption(
+            "Il documento contiene i parametri, i risultati, "
+            "gli indicatori d'impatto e le principali "
+            "limitazioni dello scenario."
+        )
