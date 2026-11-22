@@ -22,7 +22,58 @@ RISK_THRESHOLDS = {
 
 
 # ============================================================
-# VALUTAZIONE DELLE SINGOLE CONDIZIONI
+# PESI DEGLI INDICATORI
+# ============================================================
+
+INDICATOR_WEIGHTS = {
+    "Portata fluviale": 25,
+    "Riserve negli invasi": 25,
+    "Livello delle falde": 15,
+    "Deficit pluviometrico": 20,
+    "Anomalia termica": 15,
+}
+
+
+# ============================================================
+# VALIDAZIONE DEGLI INDICATORI
+# ============================================================
+
+def validate_indicator(value, name):
+
+    if value is None:
+
+        raise ValueError(
+            f"Indicatore mancante: {name}."
+        )
+
+    try:
+
+        value = float(value)
+
+    except (TypeError, ValueError):
+
+        raise ValueError(
+            f"Indicatore non numerico: {name}."
+        )
+
+    if not pd_is_finite(value):
+
+        raise ValueError(
+            f"Indicatore non valido: {name}."
+        )
+
+    return value
+
+
+def pd_is_finite(value):
+
+    import math
+
+    return math.isfinite(value)
+
+
+# ============================================================
+# VALUTAZIONE DELLE CONDIZIONI IDROLOGICHE
 # ============================================================
 
 def evaluate_hydrological_conditions(overview):
@@ -31,16 +82,19 @@ def evaluate_hydrological_conditions(overview):
 
     hydrology = overview["hydrology"]
 
-    flow_variation = (
-        hydrology["river_flow"]["variation_percentage"]
+    flow_variation = validate_indicator(
+        hydrology["river_flow"]["variation_percentage"],
+        "Variazione della portata fluviale"
     )
 
-    reservoir_variation = (
-        hydrology["reservoir_storage"]["variation_percentage"]
+    reservoir_variation = validate_indicator(
+        hydrology["reservoir_storage"]["variation_percentage"],
+        "Variazione delle riserve negli invasi"
     )
 
-    groundwater_variation = (
-        hydrology["groundwater_level"]["variation_percentage"]
+    groundwater_variation = validate_indicator(
+        hydrology["groundwater_level"]["variation_percentage"],
+        "Variazione del livello delle falde"
     )
 
     if flow_variation <= -RISK_THRESHOLDS["river_flow_decline"]:
@@ -51,7 +105,8 @@ def evaluate_hydrological_conditions(overview):
             "unit": "%",
             "severity": "warning",
             "message": (
-                "È stata rilevata una diminuzione della portata fluviale."
+                "È stata rilevata una diminuzione "
+                "della portata fluviale."
             ),
         })
 
@@ -63,7 +118,8 @@ def evaluate_hydrological_conditions(overview):
             "unit": "%",
             "severity": "warning",
             "message": (
-                "È stata rilevata una diminuzione delle riserve negli invasi."
+                "È stata rilevata una diminuzione "
+                "delle riserve negli invasi."
             ),
         })
 
@@ -75,7 +131,8 @@ def evaluate_hydrological_conditions(overview):
             "unit": "%",
             "severity": "warning",
             "message": (
-                "È stata rilevata una diminuzione del livello delle falde."
+                "È stata rilevata una diminuzione "
+                "del livello delle falde."
             ),
         })
 
@@ -92,12 +149,14 @@ def evaluate_climatic_conditions(overview):
 
     climate = overview["climate"]
 
-    rainfall_deficit = (
-        climate["rainfall"]["deficit_percentage"]
+    rainfall_deficit = validate_indicator(
+        climate["rainfall"]["deficit_percentage"],
+        "Deficit pluviometrico"
     )
 
-    temperature_anomaly = (
-        climate["temperature"]["anomaly_c"]
+    temperature_anomaly = validate_indicator(
+        climate["temperature"]["anomaly_c"],
+        "Anomalia termica"
     )
 
     if rainfall_deficit >= RISK_THRESHOLDS["rainfall_deficit"]:
@@ -135,18 +194,25 @@ def evaluate_climatic_conditions(overview):
 
 def calculate_attention_index(signals):
 
-    weights = {
-        "Portata fluviale": 25,
-        "Riserve negli invasi": 25,
-        "Livello delle falde": 15,
-        "Deficit pluviometrico": 20,
-        "Anomalia termica": 15,
-    }
+    score = 0
 
-    score = sum(
-        weights.get(signal["indicator"], 0)
-        for signal in signals
-    )
+    detected_indicators = set()
+
+    for signal in signals:
+
+        indicator = signal["indicator"]
+
+        if indicator not in INDICATOR_WEIGHTS:
+
+            continue
+
+        if indicator in detected_indicators:
+
+            continue
+
+        detected_indicators.add(indicator)
+
+        score += INDICATOR_WEIGHTS[indicator]
 
     return min(score, 100)
 
@@ -156,6 +222,17 @@ def calculate_attention_index(signals):
 # ============================================================
 
 def classify_drought_attention(score):
+
+    score = validate_indicator(
+        score,
+        "Indice di attenzione"
+    )
+
+    if score < 0 or score > 100:
+
+        raise ValueError(
+            "L'indice deve essere compreso tra 0 e 100."
+        )
 
     if score < 20:
 
@@ -292,10 +369,14 @@ def run_drought_assessment(mode="simulated"):
 
         "data_type": "simulated",
 
+        "thresholds": RISK_THRESHOLDS.copy(),
+
+        "weights": INDICATOR_WEIGHTS.copy(),
+
         "method": (
             "Indice dimostrativo basato su soglie e pesi "
             "predefiniti. Non costituisce un indice scientifico "
-            "ufficiale di siccità."
+            "ufficiale di siccità e non produce previsioni."
         ),
 
     }
