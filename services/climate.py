@@ -38,7 +38,7 @@ DEMO_REFERENCE_TEMPERATURE = [
 
 
 # ============================================================
-# CARICAMENTO DEI DATI CLIMATICI DIMOSTRATIVI
+# CARICAMENTO DEI DATI CLIMATICI
 # ============================================================
 
 def load_demo_climate():
@@ -75,7 +75,7 @@ def load_demo_climate():
 
 
 # ============================================================
-# VALIDAZIONE DEI DATI CLIMATICI
+# VALIDAZIONE DEI DATI
 # ============================================================
 
 def validate_climate(data):
@@ -83,21 +83,13 @@ def validate_climate(data):
     required_columns = [
 
         "date",
-
         "rainfall_mm",
-
         "temperature_c",
-
         "reference_rainfall_mm",
-
         "reference_temperature_c",
-
         "data_type",
-
         "source",
-
         "territory",
-
         "quality",
 
     ]
@@ -109,13 +101,9 @@ def validate_climate(data):
         )
 
     missing = [
-
         column
-
         for column in required_columns
-
         if column not in data.columns
-
     ]
 
     if missing:
@@ -127,11 +115,8 @@ def validate_climate(data):
     numeric_columns = [
 
         "rainfall_mm",
-
         "temperature_c",
-
         "reference_rainfall_mm",
-
         "reference_temperature_c",
 
     ]
@@ -149,17 +134,13 @@ def validate_climate(data):
                 f"Valori mancanti o non numerici in {column}."
             )
 
-    if (
-        data["rainfall_mm"] < 0
-    ).any():
+    if (data["rainfall_mm"] < 0).any():
 
         raise ValueError(
             "Le precipitazioni non possono essere negative."
         )
 
-    if (
-        data["reference_rainfall_mm"] < 0
-    ).any():
+    if (data["reference_rainfall_mm"] < 0).any():
 
         raise ValueError(
             "Le precipitazioni di riferimento non possono essere negative."
@@ -169,16 +150,24 @@ def validate_climate(data):
 
 
 # ============================================================
-# CALCOLO DELLE ANOMALIE CLIMATICHE
+# CALCOLO DEL DEFICIT PLUVIOMETRICO
 # ============================================================
 
 def calculate_rainfall_deficit(data):
 
-    observed = data["rainfall_mm"].sum()
+    observed = float(
+        data["rainfall_mm"].sum()
+    )
 
-    reference = data["reference_rainfall_mm"].sum()
+    reference = float(
+        data["reference_rainfall_mm"].sum()
+    )
 
-    deficit = reference - observed
+    difference = reference - observed
+
+    deficit = max(difference, 0.0)
+
+    surplus = max(-difference, 0.0)
 
     deficit_percentage = (
 
@@ -192,38 +181,48 @@ def calculate_rainfall_deficit(data):
 
     return {
 
-        "observed_mm": float(observed),
+        "observed_mm": observed,
 
-        "reference_mm": float(reference),
+        "reference_mm": reference,
 
-        "deficit_mm": float(deficit),
+        "deficit_mm": deficit,
 
-        "deficit_percentage": float(deficit_percentage),
+        "surplus_mm": surplus,
 
-    }
-
-
-def calculate_temperature_anomaly(data):
-
-    observed = data["temperature_c"].mean()
-
-    reference = data["reference_temperature_c"].mean()
-
-    anomaly = observed - reference
-
-    return {
-
-        "observed_average_c": float(observed),
-
-        "reference_average_c": float(reference),
-
-        "anomaly_c": float(anomaly),
+        "deficit_percentage": deficit_percentage,
 
     }
 
 
 # ============================================================
-# ANALISI DELLE CONDIZIONI CLIMATICHE
+# CALCOLO DELL'ANOMALIA TERMICA
+# ============================================================
+
+def calculate_temperature_anomaly(data):
+
+    observed = float(
+        data["temperature_c"].mean()
+    )
+
+    reference = float(
+        data["reference_temperature_c"].mean()
+    )
+
+    anomaly = observed - reference
+
+    return {
+
+        "observed_average_c": observed,
+
+        "reference_average_c": reference,
+
+        "anomaly_c": anomaly,
+
+    }
+
+
+# ============================================================
+# ANALISI CLIMATICA COMPLETA
 # ============================================================
 
 def analyze_climate(data):
@@ -236,11 +235,17 @@ def analyze_climate(data):
             "Non sono disponibili osservazioni climatiche."
         )
 
-    data = data.sort_values("date").reset_index(drop=True)
+    data = data.sort_values(
+        "date"
+    ).reset_index(drop=True)
 
-    rainfall = calculate_rainfall_deficit(data)
+    rainfall = calculate_rainfall_deficit(
+        data
+    )
 
-    temperature = calculate_temperature_anomaly(data)
+    temperature = calculate_temperature_anomaly(
+        data
+    )
 
     return {
 
