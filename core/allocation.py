@@ -1,17 +1,30 @@
 # ============================================================
 # AQUA COMMONS AI
-# ALLOCATION ENGINE
-# Motore matematico di allocazione idrica
+# WATER ALLOCATION ENGINE
+# Motore di allocazione e distribuzione della risorsa idrica
 # ============================================================
 
 from core.config import SECTORS
 
 
 # ============================================================
-# VALIDAZIONE DEI PARAMETRI
+# VALIDAZIONE DEGLI INPUT
 # ============================================================
 
-def validate_inputs(availability, demands, minimums):
+def validate_inputs(
+    availability,
+    demands,
+    minimums,
+    priority_order=None,
+):
+    """
+    Verifica la coerenza dei parametri di allocazione.
+    """
+
+    if availability is None:
+        raise ValueError(
+            "La disponibilità idrica non può essere vuota."
+        )
 
     availability = float(availability)
 
@@ -20,14 +33,24 @@ def validate_inputs(availability, demands, minimums):
             "La disponibilità idrica non può essere negativa."
         )
 
+    if not isinstance(demands, dict):
+        raise ValueError(
+            "La domanda deve essere fornita come dizionario."
+        )
+
+    if not isinstance(minimums, dict):
+        raise ValueError(
+            "I fabbisogni minimi devono essere forniti come dizionario."
+        )
+
     if set(demands.keys()) != set(SECTORS):
         raise ValueError(
-            "Le domande devono includere tutti i settori."
+            "La domanda deve contenere esattamente tutti i settori previsti."
         )
 
     if set(minimums.keys()) != set(SECTORS):
         raise ValueError(
-            "I fabbisogni minimi devono includere tutti i settori."
+            "I fabbisogni minimi devono contenere esattamente tutti i settori."
         )
 
     for sector in SECTORS:
@@ -47,7 +70,7 @@ def validate_inputs(availability, demands, minimums):
 
         if minimum > demand:
             raise ValueError(
-                f"Il minimo di {sector} supera la sua domanda."
+                f"Il fabbisogno minimo di {sector} supera la domanda."
             )
 
     total_minimum = sum(
@@ -55,136 +78,159 @@ def validate_inputs(availability, demands, minimums):
         for sector in SECTORS
     )
 
-    if total_minimum > availability + 1e-9:
+    if total_minimum > availability:
         raise ValueError(
-            "Allocazione impossibile: la disponibilità è inferiore "
-            "alla somma dei fabbisogni minimi."
+            "La disponibilità idrica non è sufficiente "
+            "a rispettare tutti i fabbisogni minimi."
         )
+
+    if priority_order is not None:
+
+        if (
+            len(priority_order) != len(SECTORS)
+            or set(priority_order) != set(SECTORS)
+        ):
+            raise ValueError(
+                "L'ordine di priorità deve contenere tutti i settori "
+                "una sola volta."
+            )
+
+    return True
 
 
 # ============================================================
 # ALLOCAZIONE PROPORZIONALE
 # ============================================================
 
-def proportional_allocation(availability, demands, minimums):
+def proportional_allocation(
+    availability,
+    demands,
+    minimums,
+):
+    """
+    Distribuisce la risorsa idrica secondo una logica proporzionale.
 
-    validate_inputs(availability, demands, minimums)
+    1. Garantisce prima i fabbisogni minimi.
+    2. Distribuisce la risorsa residua proporzionalmente
+       alla domanda ancora non soddisfatta.
+    3. Rispetta il limite massimo della domanda di ogni settore.
+    """
 
     allocations = {
         sector: float(minimums[sector])
         for sector in SECTORS
     }
 
-    remaining = (
+    remaining_water = (
         float(availability)
         - sum(allocations.values())
     )
 
-    capacities = {
-        sector: max(
-            0.0,
-            float(demands[sector]) - allocations[sector]
-        )
-        for sector in SECTORS
-    }
+    while remaining_water > 1e-9:
 
-    tolerance = 1e-9
-
-    while remaining > tolerance:
-
-        active = [
+        eligible_sectors = [
             sector
             for sector in SECTORS
-            if capacities[sector] > tolerance
+            if allocations[sector] < float(demands[sector]) - 1e-9
         ]
 
-        if not active:
+        if not eligible_sectors:
             break
 
-        total_capacity = sum(
-            capacities[sector]
-            for sector in active
+        remaining_demands = {
+            sector: (
+                float(demands[sector])
+                - allocations[sector]
+            )
+            for sector in eligible_sectors
+        }
+
+        total_remaining_demand = sum(
+            remaining_demands.values()
         )
 
-        if total_capacity <= tolerance:
+        if total_remaining_demand <= 0:
             break
 
-        amount_to_distribute = remaining
         distributed = 0.0
 
-        for sector in active:
+        for sector in eligible_sectors:
 
-            share = (
-                amount_to_distribute
-                * capacities[sector]
-                / total_capacity
+            proportional_share = (
+                remaining_water
+                * remaining_demands[sector]
+                / total_remaining_demand
             )
 
-            additional = min(
-                share,
-                capacities[sector]
+            available_capacity = (
+                float(demands[sector])
+                - allocations[sector]
             )
 
-            allocations[sector] += additional
-            capacities[sector] -= additional
-            distributed += additional
+            amount = min(
+                proportional_share,
+                available_capacity,
+            )
 
-        remaining -= distributed
+            allocations[sector] += amount
+            distributed += amount
 
-        if distributed <= tolerance:
+        remaining_water -= distributed
+
+        if distributed <= 1e-9:
             break
 
     return allocations
 
 
 # ============================================================
-# ALLOCAZIONE SECONDO PRIORITÀ
+# ALLOCAZIONE PER PRIORITÀ
 # ============================================================
 
 def priority_allocation(
     availability,
     demands,
     minimums,
-    priority_order
+    priority_order,
 ):
+    """
+    Distribuisce la risorsa secondo un ordine di priorità.
 
-    validate_inputs(availability, demands, minimums)
-
-    if (
-        len(priority_order) != len(SECTORS)
-        or set(priority_order) != set(SECTORS)
-    ):
-        raise ValueError(
-            "L'ordine di priorità deve contenere tutti i settori "
-            "una sola volta."
-        )
+    1. Garantisce i fabbisogni minimi.
+    2. Assegna la risorsa residua seguendo l'ordine stabilito.
+    3. Non supera mai la domanda di ciascun settore.
+    """
 
     allocations = {
         sector: float(minimums[sector])
         for sector in SECTORS
     }
 
-    remaining = (
+    remaining_water = (
         float(availability)
         - sum(allocations.values())
     )
 
     for sector in priority_order:
 
-        additional_need = (
-            float(demands[sector]) - allocations[sector]
-        )
-
-        additional = min(
-            additional_need,
-            remaining
-        )
-
-        allocations[sector] += additional
-        remaining -= additional
-
-        if remaining <= 1e-9:
+        if remaining_water <= 1e-9:
             break
+
+        remaining_demand = (
+            float(demands[sector])
+            - allocations[sector]
+        )
+
+        if remaining_demand <= 0:
+            continue
+
+        amount = min(
+            remaining_water,
+            remaining_demand,
+        )
+
+        allocations[sector] += amount
+        remaining_water -= amount
 
     return allocations
 
@@ -200,41 +246,82 @@ def calculate_results(
     strategy="proportional",
     priority_order=None,
 ):
+    """
+    Calcola i risultati completi di uno scenario di allocazione.
 
-    validate_inputs(availability, demands, minimums)
+    Restituisce un dizionario strutturato compatibile con:
+    - core.impact
+    - core.ai_engine
+    - Impact Analysis
+    - Decision Report
+    """
+
+    validate_inputs(
+        availability,
+        demands,
+        minimums,
+        priority_order,
+    )
+
+    availability = float(availability)
+
+    normalized_demands = {
+        sector: float(demands[sector])
+        for sector in SECTORS
+    }
+
+    normalized_minimums = {
+        sector: float(minimums[sector])
+        for sector in SECTORS
+    }
+
+    # --------------------------------------------------------
+    # SELEZIONE STRATEGIA
+    # --------------------------------------------------------
 
     if strategy == "proportional":
 
         allocations = proportional_allocation(
             availability,
-            demands,
-            minimums
+            normalized_demands,
+            normalized_minimums,
         )
 
     elif strategy == "priority":
 
         if priority_order is None:
-            priority_order = SECTORS
+            priority_order = list(SECTORS)
 
         allocations = priority_allocation(
             availability,
-            demands,
-            minimums,
-            priority_order
+            normalized_demands,
+            normalized_minimums,
+            priority_order,
         )
 
     else:
 
         raise ValueError(
-            "Strategia di allocazione non riconosciuta."
+            "Strategia non riconosciuta. "
+            "Utilizzare 'proportional' oppure 'priority'."
         )
 
-    results = {}
+    # --------------------------------------------------------
+    # RISULTATI SETTORIALI
+    # --------------------------------------------------------
+
+    sector_results = {}
 
     for sector in SECTORS:
 
-        demand = float(demands[sector])
-        allocated = float(allocations[sector])
+        demand = normalized_demands[sector]
+        minimum = normalized_minimums[sector]
+        allocated = allocations[sector]
+
+        shortage = max(
+            demand - allocated,
+            0.0,
+        )
 
         coverage = (
             allocated / demand * 100
@@ -242,39 +329,63 @@ def calculate_results(
             else 100.0
         )
 
-        shortage = max(
-            0.0,
-            demand - allocated
-        )
-
-        results[sector] = {
+        sector_results[sector] = {
             "demand": demand,
-            "minimum": float(minimums[sector]),
+            "minimum": minimum,
             "allocated": allocated,
             "shortage": shortage,
             "coverage": coverage,
         }
 
-    total_allocated = sum(allocations.values())
+    # --------------------------------------------------------
+    # INDICATORI GLOBALI
+    # --------------------------------------------------------
 
-    return {
+    total_demand = sum(
+        normalized_demands.values()
+    )
+
+    total_minimum = sum(
+        normalized_minimums.values()
+    )
+
+    total_allocated = sum(
+        allocations.values()
+    )
+
+    total_shortage = sum(
+        sector_results[sector]["shortage"]
+        for sector in SECTORS
+    )
+
+    unused_water = max(
+        availability - total_allocated,
+        0.0,
+    )
+
+    # --------------------------------------------------------
+    # RISULTATO COMPLETO
+    # --------------------------------------------------------
+
+    results = {
         "strategy": strategy,
-        "availability": float(availability),
-        "total_demand": sum(
-            float(demands[sector])
-            for sector in SECTORS
-        ),
-        "total_minimum": sum(
-            float(minimums[sector])
-            for sector in SECTORS
-        ),
+
+        "availability": availability,
+
+        "total_demand": total_demand,
+
+        "total_minimum": total_minimum,
+
         "total_allocated": total_allocated,
-        "unused_water": max(
-            0.0,
-            float(availability) - total_allocated
-        ),
-        "sectors": results,
+
+        "total_shortage": total_shortage,
+
+        "unused_water": unused_water,
+
+        "sectors": sector_results,
     }
+
+    return results
 
 
 # ============================================================
@@ -287,23 +398,51 @@ def compare_strategies(
     minimums,
     priority_order=None,
 ):
+    """
+    Confronta allocazione proporzionale e allocazione per priorità.
+    """
 
-    proportional = calculate_results(
-        availability,
-        demands,
-        minimums,
+    if priority_order is None:
+        priority_order = list(SECTORS)
+
+    proportional_results = calculate_results(
+        availability=availability,
+        demands=demands,
+        minimums=minimums,
         strategy="proportional",
     )
 
-    priority = calculate_results(
-        availability,
-        demands,
-        minimums,
+    priority_results = calculate_results(
+        availability=availability,
+        demands=demands,
+        minimums=minimums,
         strategy="priority",
         priority_order=priority_order,
     )
 
+    comparison = {}
+
+    for sector in SECTORS:
+
+        proportional_allocation_value = (
+            proportional_results["sectors"][sector]["allocated"]
+        )
+
+        priority_allocation_value = (
+            priority_results["sectors"][sector]["allocated"]
+        )
+
+        comparison[sector] = {
+            "proportional": proportional_allocation_value,
+            "priority": priority_allocation_value,
+            "difference": (
+                priority_allocation_value
+                - proportional_allocation_value
+            ),
+        }
+
     return {
-        "proportional": proportional,
-        "priority": priority,
+        "proportional": proportional_results,
+        "priority": priority_results,
+        "comparison": comparison,
     }
