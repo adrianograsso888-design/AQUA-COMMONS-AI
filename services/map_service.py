@@ -96,8 +96,17 @@ def display_map(st, mode="simulated"):
 
         return map_result
 
+    if map_data.empty:
+
+        st.info(
+            "Non sono disponibili punti geografici "
+            "per la visualizzazione."
+        )
+
+        return map_result
+
     categories = sorted(
-        map_data["category"].unique().tolist()
+        map_data["category"].dropna().unique().tolist()
     )
 
     selected_categories = st.multiselect(
@@ -114,20 +123,29 @@ def display_map(st, mode="simulated"):
 
     filtered_data = filtered_result["data"]
 
-    col1, col2 = st.columns(2)
+    filtered_summary = filtered_result["summary"]
+
+    col1, col2, col3 = st.columns(3)
 
     with col1:
 
         st.metric(
             "Punti geografici",
-            len(filtered_data),
+            filtered_summary["total_points"],
         )
 
     with col2:
 
         st.metric(
-            "Categorie disponibili",
-            len(selected_categories),
+            "Categorie visualizzate",
+            filtered_summary["categories"],
+        )
+
+    with col3:
+
+        st.metric(
+            "Coordinate valide",
+            filtered_summary["valid_coordinates"],
         )
 
     if filtered_data.empty:
@@ -145,8 +163,8 @@ def display_map(st, mode="simulated"):
 
     st.caption(
         "Fonte: dataset dimostrativo. "
-        "Le coordinate non rappresentano necessariamente "
-        "stazioni o infrastrutture reali."
+        "Le coordinate sono illustrative e non rappresentano "
+        "necessariamente stazioni o infrastrutture reali."
     )
 
     return map_result
