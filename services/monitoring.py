@@ -1,4 +1,3 @@
-
 # ============================================================
 # AQUA COMMONS AI
 # INTEGRATED MONITORING
@@ -24,7 +23,25 @@ from services.map_service import load_map_data
 # ANALISI INTEGRATA DEL RISCHIO
 # ============================================================
 
-def analyze_integrated_drought(overview):
+def analyze_integrated_drought(overview, data_status="simulated"):
+
+    if not isinstance(overview, dict):
+        raise TypeError(
+            "Il quadro informativo deve essere un dizionario."
+        )
+
+    required_sections = [
+        "territory",
+        "hydrology",
+        "climate",
+    ]
+
+    for section in required_sections:
+
+        if section not in overview:
+            raise ValueError(
+                f"Manca la sezione {section} nel quadro informativo."
+            )
 
     hydrological_signals = evaluate_hydrological_conditions(
         overview
@@ -69,7 +86,7 @@ def analyze_integrated_drought(overview):
 
         "recommendations": recommendations,
 
-        "data_type": "simulated",
+        "data_type": data_status,
 
         "thresholds": RISK_THRESHOLDS.copy(),
 
@@ -78,7 +95,9 @@ def analyze_integrated_drought(overview):
         "method": (
             "Indice dimostrativo basato su soglie e pesi "
             "predefiniti. Non costituisce un indice scientifico "
-            "ufficiale di siccità e non produce previsioni."
+            "ufficiale di siccità e non produce previsioni. "
+            "Le soglie e i pesi richiedono calibrazione "
+            "su dati territoriali validati."
         ),
 
     }
@@ -94,8 +113,11 @@ def load_monitoring_dashboard(mode="simulated"):
 
     overview = integrated["overview"]
 
+    provenance = integrated["provenance"]
+
     drought = analyze_integrated_drought(
-        overview
+        overview,
+        data_status=provenance["status"],
     )
 
     geography = load_map_data(mode)
@@ -112,11 +134,11 @@ def load_monitoring_dashboard(mode="simulated"):
 
         "geography": geography,
 
-        "provenance": integrated["provenance"],
+        "provenance": provenance,
 
         "integrated_series": integrated["integrated_series"],
 
-        "data_type": mode,
+        "data_type": provenance["status"],
 
     }
 
@@ -132,6 +154,10 @@ def generate_monitoring_summary(monitoring):
     hydrology = monitoring["hydrology"]
 
     climate = monitoring["climate"]
+
+    geography = monitoring["geography"]
+
+    provenance = monitoring["provenance"]
 
     return {
 
@@ -164,12 +190,14 @@ def generate_monitoring_summary(monitoring):
         ),
 
         "monitoring_points": (
-            monitoring["geography"]["summary"]["total_points"]
+            geography["summary"]["total_points"]
         ),
 
-        "data_status": (
-            monitoring["provenance"]["status"]
-        ),
+        "data_status": provenance["status"],
+
+        "data_sources": provenance["sources"],
+
+        "data_records": provenance["total_dates"],
 
     }
 
@@ -184,6 +212,8 @@ def generate_monitoring_alerts(monitoring):
 
     drought = monitoring["drought"]
 
+    data_status = monitoring["provenance"]["status"]
+
     for signal in drought["all_signals"]:
 
         alerts.append({
@@ -197,6 +227,10 @@ def generate_monitoring_alerts(monitoring):
             "value": signal["value"],
 
             "unit": signal["unit"],
+
+            "data_status": data_status,
+
+            "is_operational": data_status == "official",
 
         })
 
@@ -216,6 +250,10 @@ def generate_monitoring_alerts(monitoring):
             "value": None,
 
             "unit": None,
+
+            "data_status": data_status,
+
+            "is_operational": False,
 
         })
 
@@ -247,5 +285,7 @@ def run_integrated_monitoring(mode="simulated"):
         "alerts": alerts,
 
         "status": "completed",
+
+        "analysis_type": "deterministic_rule_based",
 
     }
