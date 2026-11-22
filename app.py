@@ -2299,28 +2299,25 @@ elif page == "Decision Report":
 
 
 # ============================================================
-# FOOTER
+# FOOTER - VERSIONE STREAMLIT NATIVA
 # ============================================================
 
 st.divider()
 
-st.markdown(
-    """
-    <div style="
-        text-align:center;
-        color:#718096;
-        padding:10px;
-    ">
-
-        <b>AQUA COMMONS AI</b><br>
-
-        Integrated Water Intelligence and Decision Support Platform<br>
-
-        <span style="font-size:0.8rem;">
-            Human-centred water governance · Transparency · Sustainability
-        </span>
-
-    </div>
-    """,
-    unsafe_allow_html=True,
+footer_col1, footer_col2, footer_col3 = st.columns(
+    [1, 2, 1]
 )
+
+with footer_col2:
+
+    st.markdown(
+        "**AQUA COMMONS AI**"
+    )
+
+    st.caption(
+        "Integrated Water Intelligence and Decision Support Platform"
+    )
+
+    st.caption(
+        "Human-centred water governance · Transparency · Sustainability"
+    )
