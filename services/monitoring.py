@@ -7,9 +7,81 @@
 
 from services.data_integration import run_data_integration
 
-from services.drought import run_drought_assessment
+from services.drought import (
+    evaluate_hydrological_conditions,
+    evaluate_climatic_conditions,
+    calculate_attention_index,
+    classify_drought_attention,
+    generate_prevention_recommendations,
+    RISK_THRESHOLDS,
+    INDICATOR_WEIGHTS,
+)
 
 from services.map_service import load_map_data
+
+
+# ============================================================
+# ANALISI INTEGRATA DEL RISCHIO
+# ============================================================
+
+def analyze_integrated_drought(overview):
+
+    hydrological_signals = evaluate_hydrological_conditions(
+        overview
+    )
+
+    climatic_signals = evaluate_climatic_conditions(
+        overview
+    )
+
+    all_signals = (
+        hydrological_signals
+        + climatic_signals
+    )
+
+    attention_index = calculate_attention_index(
+        all_signals
+    )
+
+    attention_level = classify_drought_attention(
+        attention_index
+    )
+
+    recommendations = generate_prevention_recommendations(
+        all_signals
+    )
+
+    return {
+
+        "territory": overview["territory"],
+
+        "attention_index": attention_index,
+
+        "attention_level": attention_level,
+
+        "hydrological_signals": hydrological_signals,
+
+        "climatic_signals": climatic_signals,
+
+        "all_signals": all_signals,
+
+        "signal_count": len(all_signals),
+
+        "recommendations": recommendations,
+
+        "data_type": "simulated",
+
+        "thresholds": RISK_THRESHOLDS.copy(),
+
+        "weights": INDICATOR_WEIGHTS.copy(),
+
+        "method": (
+            "Indice dimostrativo basato su soglie e pesi "
+            "predefiniti. Non costituisce un indice scientifico "
+            "ufficiale di siccità e non produce previsioni."
+        ),
+
+    }
 
 
 # ============================================================
@@ -20,11 +92,13 @@ def load_monitoring_dashboard(mode="simulated"):
 
     integrated = run_data_integration(mode)
 
-    drought = run_drought_assessment(mode)
+    overview = integrated["overview"]
+
+    drought = analyze_integrated_drought(
+        overview
+    )
 
     geography = load_map_data(mode)
-
-    overview = integrated["overview"]
 
     return {
 
@@ -75,6 +149,10 @@ def generate_monitoring_summary(monitoring):
 
         "reservoir_variation": (
             hydrology["reservoir_storage"]["variation_percentage"]
+        ),
+
+        "groundwater_variation": (
+            hydrology["groundwater_level"]["variation_percentage"]
         ),
 
         "rainfall_deficit": (
