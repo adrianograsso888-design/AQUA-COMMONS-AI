@@ -22,49 +22,26 @@ from core.config import (
     DEFAULT_DEMAND,
     DEFAULT_MINIMUM,
     DEFAULT_AVAILABILITY,
-    PLATFORM_MODES,
-    DEFAULT_PLATFORM_MODE,
     PILOT_TERRITORY,
     PILOT_REGION,
 )
 
-from core.allocation import (
-    calculate_results,
-    compare_strategies,
-)
-
+from core.allocation import calculate_results
 from core.impact import (
     calculate_global_impacts,
     calculate_sector_impacts,
-    compare_impacts,
+    generate_impact_summary,
 )
-
 from core.data_manager import load_data
+from core.ai_engine import run_integrated_analysis
 
-from core.ai_engine import (
-    run_integrated_analysis,
-)
-
-from services.data_integration import (
-    run_data_integration,
-)
-
-from services.drought import (
-    run_drought_assessment,
-)
-
-from services.monitoring import (
-    run_integrated_monitoring,
-)
-
-from services.map_service import (
-    display_map,
-    load_map_data,
-)
+from services.monitoring import run_integrated_monitoring
+from services.drought import run_drought_assessment
+from services.map_service import display_map
 
 
 # ============================================================
-# CONFIGURAZIONE STREAMLIT
+# CONFIGURAZIONE PAGINA
 # ============================================================
 
 st.set_page_config(
@@ -76,47 +53,59 @@ st.set_page_config(
 
 
 # ============================================================
-# CONFIGURAZIONE GRAFICA
+# STILE GRAFICO
 # ============================================================
 
 st.markdown(
     """
     <style>
-
-    .stApp {
-        background-color: #F4F7FA;
+    .main {
+        background-color: #f5f8fc;
     }
 
-    section[data-testid="stSidebar"] {
-        background-color: #102B40;
-    }
-
-    section[data-testid="stSidebar"] * {
-        color: white;
+    .block-container {
+        padding-top: 1.5rem;
+        padding-bottom: 3rem;
     }
 
     h1, h2, h3 {
-        color: #123B56;
+        color: #12304a;
     }
 
     div[data-testid="stMetric"] {
         background-color: white;
+        border: 1px solid #e2eaf2;
+        padding: 16px;
+        border-radius: 12px;
+    }
+
+    .info-box {
+        background-color: #eaf3fa;
         padding: 15px;
         border-radius: 10px;
-        border: 1px solid #DFE7EE;
+        border-left: 4px solid #2384b8;
+        margin-bottom: 15px;
     }
 
-    .aqua-card {
-        background-color: white;
-        padding: 18px;
+    .warning-box {
+        background-color: #fff4df;
+        padding: 15px;
         border-radius: 10px;
-        border: 1px solid #DFE7EE;
-        margin-bottom: 10px;
+        border-left: 4px solid #e49b24;
+        margin-bottom: 15px;
     }
 
-    .aqua-small {
-        color: #607586;
-        font-size: 13px;
+    .success-box {
+        background-color: #e9f6ef;
+        padding: 15px;
+        border-radius: 10px;
+        border-left: 4px solid #27965b;
+        margin-bottom: 15px;
+    }
+
+    .small-text {
+        color: #64748b;
+        font-size: 0.85rem;
     }
 
     </style>
@@ -126,47 +115,70 @@ st.markdown(
 
 
 # ============================================================
-# INIZIALIZZAZIONE DELLO STATO
+# COSTANTI APPLICATIVE
+# ============================================================
+
+DATA_MODE = "simulated"
+
+GENERIC_TERRITORY = "Territorio dimostrativo"
+GENERIC_REGION = "Italia"
+
+PILOT_MODE_LABEL = "Analisi territoriale"
+
+DISCLAIMER = (
+    "I valori visualizzati nella versione dimostrativa sono simulati "
+    "e non rappresentano misurazioni ufficiali del territorio. "
+    "Le analisi sono basate su regole deterministiche e non costituiscono "
+    "previsioni scientifiche o decisioni amministrative automatiche."
+)
+
+
+# ============================================================
+# SESSION STATE
 # ============================================================
 
 def initialize_session_state():
 
+    if "platform_mode" not in st.session_state:
+        st.session_state.platform_mode = "Demo generica"
+
     if "scenario_availability" not in st.session_state:
-        st.session_state["scenario_availability"] = (
+        st.session_state.scenario_availability = float(
             DEFAULT_AVAILABILITY
         )
 
-    if "platform_mode" not in st.session_state:
-        st.session_state["platform_mode"] = (
-            DEFAULT_PLATFORM_MODE
-        )
-
-    if "scenario_priority" not in st.session_state:
-        st.session_state["scenario_priority"] = list(SECTORS)
-
     for sector in SECTORS:
 
-        demand_key = f"scenario_demand_{sector}"
-        minimum_key = f"scenario_minimum_{sector}"
+        if f"scenario_demand_{sector}" not in st.session_state:
+            st.session_state[f"scenario_demand_{sector}"] = float(
+                DEFAULT_DEMAND[sector]
+            )
 
-        if demand_key not in st.session_state:
-            st.session_state[demand_key] = DEFAULT_DEMAND[sector]
-
-        if minimum_key not in st.session_state:
-            st.session_state[minimum_key] = DEFAULT_MINIMUM[sector]
+        if f"scenario_minimum_{sector}" not in st.session_state:
+            st.session_state[f"scenario_minimum_{sector}"] = float(
+                DEFAULT_MINIMUM[sector]
+            )
 
 
 initialize_session_state()
 
 
 # ============================================================
-# RECUPERO DEI PARAMETRI DELLO SCENARIO
+# FUNZIONI DI SUPPORTO
 # ============================================================
 
-def get_current_scenario():
+def get_territory():
+
+    if st.session_state.platform_mode == PILOT_MODE_LABEL:
+        return PILOT_TERRITORY, PILOT_REGION
+
+    return GENERIC_TERRITORY, GENERIC_REGION
+
+
+def get_scenario_inputs():
 
     availability = float(
-        st.session_state["scenario_availability"]
+        st.session_state.scenario_availability
     )
 
     demands = {
@@ -183,133 +195,51 @@ def get_current_scenario():
         for sector in SECTORS
     }
 
-    priority = list(
-        st.session_state["scenario_priority"]
-    )
-
-    return availability, demands, minimums, priority
+    return availability, demands, minimums
 
 
-def scenario_is_valid(availability, demands, minimums, priority):
+def validate_scenario(availability, demands, minimums):
+
+    errors = []
 
     if availability < 0:
-        return False, "La disponibilità idrica non può essere negativa."
+        errors.append("La disponibilità idrica non può essere negativa.")
 
     for sector in SECTORS:
 
         if demands[sector] < 0:
-            return False, f"Domanda non valida per {sector}."
-
-        if minimums[sector] < 0:
-            return False, f"Quota minima non valida per {sector}."
-
-        if minimums[sector] > demands[sector]:
-            return False, (
-                f"La quota minima di {sector} supera la domanda."
+            errors.append(
+                f"La domanda del settore {sector} non può essere negativa."
             )
 
-    if sum(minimums.values()) > availability + 1e-9:
+        if minimums[sector] < 0:
+            errors.append(
+                f"Il minimo del settore {sector} non può essere negativo."
+            )
 
-        return False, (
-            "La somma delle quote minime supera la disponibilità idrica."
+        if minimums[sector] > demands[sector]:
+            errors.append(
+                f"Il minimo di {sector} supera la domanda del settore."
+            )
+
+    if sum(minimums.values()) > availability:
+        errors.append(
+            "La disponibilità idrica non è sufficiente a rispettare "
+            "tutti i fabbisogni minimi impostati."
         )
 
-    if (
-        len(priority) != len(SECTORS)
-        or set(priority) != set(SECTORS)
-    ):
-
-        return False, "L'ordine delle priorità non è valido."
-
-    return True, "Scenario valido."
+    return errors
 
 
-# ============================================================
-# CALCOLO DELLE STRATEGIE
-# ============================================================
-
-def calculate_scenario_results(
-    availability,
-    demands,
-    minimums,
-    priority,
-):
-
-    proportional = calculate_results(
-        availability,
-        demands,
-        minimums,
-        strategy="proportional",
-        priority_order=priority,
-    )
-
-    priority_result = calculate_results(
-        availability,
-        demands,
-        minimums,
-        strategy="priority",
-        priority_order=priority,
-    )
-
-    return proportional, priority_result
-
-
-def get_strategy_results(
-    availability,
-    demands,
-    minimums,
-    priority,
-    strategy,
-):
-
-    return calculate_results(
-        availability,
-        demands,
-        minimums,
-        strategy=strategy,
-        priority_order=priority,
-    )
-
-
-# ============================================================
-# FUNZIONI DI SUPPORTO
-# ============================================================
-
-def format_number(value, decimals=2):
+def format_number(value, decimals=1):
 
     try:
         return f"{float(value):,.{decimals}f}".replace(",", "X").replace(".", ",").replace("X", ".")
-
     except (TypeError, ValueError):
         return "N/D"
 
 
-def show_data_status(status):
-
-    labels = {
-        "simulated": "Dati simulati",
-        "official": "Dati ufficiali",
-        "manual": "Dati manuali",
-        "hybrid": "Dati ibridi",
-        "unknown": "Provenienza non verificata",
-        "empty": "Nessun dato",
-        "error": "Errore nella verifica",
-    }
-
-    return labels.get(status, str(status))
-
-
-def show_prototype_notice():
-
-    st.info(
-        "PROTOTIPO DIMOSTRATIVO — I dati attualmente disponibili "
-        "sono simulati e non rappresentano misurazioni ufficiali. "
-        "Le analisi sono strumenti di supporto e non sostituiscono "
-        "le decisioni delle autorità competenti."
-    )
-
-
-def build_sector_dataframe(results):
+def build_results_dataframe(results):
 
     rows = []
 
@@ -319,36 +249,54 @@ def build_sector_dataframe(results):
 
         rows.append({
             "Settore": sector,
-            "Domanda (hm³)": values["demand"],
-            "Quota minima (hm³)": values["minimum"],
-            "Acqua assegnata (hm³)": values["allocated"],
-            "Deficit (hm³)": values["shortage"],
+            "Domanda": values["demand"],
+            "Minimo": values["minimum"],
+            "Acqua assegnata": values["allocated"],
+            "Carenza": values["shortage"],
             "Copertura (%)": values["coverage"],
         })
 
     return pd.DataFrame(rows)
 
 
-def get_strategy_label(strategy):
+def display_results_metrics(results):
 
-    if strategy == "proportional":
-        return "Allocazione proporzionale"
+    col1, col2, col3, col4 = st.columns(4)
 
-    return "Allocazione per priorità"
+    col1.metric(
+        "Disponibilità",
+        f"{format_number(results['availability'])} hm³"
+    )
+
+    col2.metric(
+        "Domanda totale",
+        f"{format_number(results['total_demand'])} hm³"
+    )
+
+    col3.metric(
+        "Acqua assegnata",
+        f"{format_number(results['total_allocated'])} hm³"
+    )
+
+    col4.metric(
+        "Carenza complessiva",
+        f"{format_number(results['total_demand'] - results['total_allocated'])} hm³"
+    )
 
 
-# ============================================================
-# GENERAZIONE DEL PDF
-# ============================================================
+def get_analysis_data():
 
-def generate_pdf_report(
+    data = load_data(DATA_MODE)
+
+    return data
+
+
+def create_pdf_report(
+    territory,
+    region,
     results,
-    availability,
-    demands,
-    minimums,
-    priority,
-    strategy_label,
-    comparison,
+    impacts,
+    strategy,
 ):
 
     buffer = BytesIO()
@@ -364,1570 +312,1449 @@ def generate_pdf_report(
 
     styles = getSampleStyleSheet()
 
-    title_style = ParagraphStyle(
-        "AquaTitle",
-        parent=styles["Title"],
-        textColor=colors.HexColor("#123B56"),
-        fontSize=21,
-        spaceAfter=12,
-    )
-
-    heading_style = ParagraphStyle(
-        "AquaHeading",
-        parent=styles["Heading2"],
-        textColor=colors.HexColor("#123B56"),
-        fontSize=12,
-        spaceBefore=12,
-        spaceAfter=6,
-    )
-
-    body_style = styles["BodyText"]
-
-    elements = []
-
-    def add_table(data, widths):
-
-        table = Table(
-            data,
-            colWidths=widths,
-            repeatRows=1,
+    styles.add(
+        ParagraphStyle(
+            name="ReportTitle",
+            parent=styles["Title"],
+            fontSize=20,
+            textColor=colors.HexColor("#12304a"),
+            spaceAfter=15,
         )
-
-        table.setStyle(
-            TableStyle([
-                (
-                    "BACKGROUND",
-                    (0, 0),
-                    (-1, 0),
-                    colors.HexColor("#123B56"),
-                ),
-                (
-                    "TEXTCOLOR",
-                    (0, 0),
-                    (-1, 0),
-                    colors.white,
-                ),
-                (
-                    "GRID",
-                    (0, 0),
-                    (-1, -1),
-                    0.4,
-                    colors.HexColor("#D5DEE6"),
-                ),
-                (
-                    "BACKGROUND",
-                    (0, 1),
-                    (-1, -1),
-                    colors.white,
-                ),
-                (
-                    "PADDING",
-                    (0, 0),
-                    (-1, -1),
-                    6,
-                ),
-                (
-                    "VALIGN",
-                    (0, 0),
-                    (-1, -1),
-                    "MIDDLE",
-                ),
-            ])
-        )
-
-        elements.append(table)
-
-    generated_at = datetime.now().strftime("%d/%m/%Y %H:%M")
-
-    elements.append(
-        Paragraph("AQUA COMMONS AI", title_style)
     )
 
-    elements.append(
+    styles.add(
+        ParagraphStyle(
+            name="SectionTitle",
+            parent=styles["Heading2"],
+            fontSize=13,
+            textColor=colors.HexColor("#176b87"),
+            spaceBefore=15,
+            spaceAfter=8,
+        )
+    )
+
+    story = []
+
+    story.append(
         Paragraph(
-            "DECISION SUPPORT REPORT",
-            styles["Heading2"],
+            "AQUA COMMONS AI",
+            styles["ReportTitle"]
         )
     )
 
-    elements.append(
+    story.append(
         Paragraph(
-            f"Generato il: {generated_at}",
-            body_style,
+            "Integrated Water Intelligence and Decision Support Platform",
+            styles["Normal"]
         )
     )
 
-    elements.append(Spacer(1, 12))
+    story.append(Spacer(1, 12))
 
-    global_impacts = calculate_global_impacts(results)
-
-    elements.append(
-        Paragraph("1. Sintesi dello scenario", heading_style)
+    story.append(
+        Paragraph(
+            f"<b>Territorio:</b> {territory}",
+            styles["Normal"]
+        )
     )
 
-    summary_data = [
+    story.append(
+        Paragraph(
+            f"<b>Regione:</b> {region}",
+            styles["Normal"]
+        )
+    )
+
+    story.append(
+        Paragraph(
+            f"<b>Data di generazione:</b> {datetime.now().strftime('%d/%m/%Y %H:%M')}",
+            styles["Normal"]
+        )
+    )
+
+    story.append(
+        Paragraph(
+            f"<b>Strategia:</b> {strategy}",
+            styles["Normal"]
+        )
+    )
+
+    story.append(Spacer(1, 15))
+
+    story.append(
+        Paragraph(
+            "1. Quadro generale",
+            styles["SectionTitle"]
+        )
+    )
+
+    general_data = [
         ["Indicatore", "Valore"],
-        ["Disponibilità idrica", f"{availability:.2f} hm³"],
-        ["Domanda complessiva", f"{global_impacts['total_demand']:.2f} hm³"],
-        ["Acqua assegnata", f"{global_impacts['total_allocated']:.2f} hm³"],
-        ["Deficit complessivo", f"{global_impacts['total_shortage']:.2f} hm³"],
-        ["Strategia", strategy_label],
+        [
+            "Disponibilità idrica",
+            f"{format_number(results['availability'])} hm³"
+        ],
+        [
+            "Domanda complessiva",
+            f"{format_number(results['total_demand'])} hm³"
+        ],
+        [
+            "Acqua assegnata",
+            f"{format_number(results['total_allocated'])} hm³"
+        ],
+        [
+            "Acqua non assegnata",
+            f"{format_number(results['unused_water'])} hm³"
+        ],
+        [
+            "Carenza complessiva",
+            f"{format_number(impacts['total_shortage'])} hm³"
+        ],
     ]
 
-    add_table(summary_data, [8 * cm, 8 * cm])
-
-    elements.append(
-        Paragraph("2. Parametri dello scenario", heading_style)
+    general_table = Table(
+        general_data,
+        colWidths=[9 * cm, 7 * cm]
     )
 
-    parameter_data = [
-        ["Settore", "Domanda", "Quota minima"],
-    ]
-
-    for sector in SECTORS:
-
-        parameter_data.append([
-            sector,
-            f"{demands[sector]:.2f} hm³",
-            f"{minimums[sector]:.2f} hm³",
+    general_table.setStyle(
+        TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#12304a")),
+            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+            ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#ccd6e0")),
+            ("PADDING", (0, 0), (-1, -1), 7),
+            ("BACKGROUND", (0, 1), (-1, -1), colors.HexColor("#f4f8fb")),
         ])
-
-    add_table(parameter_data, [6 * cm, 5 * cm, 5 * cm])
-
-    elements.append(
-        Paragraph("3. Risultati dell'allocazione", heading_style)
     )
 
-    allocation_data = [
-        ["Settore", "Assegnata", "Deficit", "Copertura"],
-    ]
+    story.append(general_table)
+
+    story.append(
+        Paragraph(
+            "2. Distribuzione settoriale",
+            styles["SectionTitle"]
+        )
+    )
+
+    sector_data = [[
+        "Settore",
+        "Domanda",
+        "Minimo",
+        "Assegnazione",
+        "Carenza",
+    ]]
 
     for sector in SECTORS:
 
         values = results["sectors"][sector]
 
-        allocation_data.append([
+        sector_data.append([
             sector,
-            f"{values['allocated']:.2f}",
-            f"{values['shortage']:.2f}",
-            f"{values['coverage']:.1f}%",
+            format_number(values["demand"]),
+            format_number(values["minimum"]),
+            format_number(values["allocated"]),
+            format_number(values["shortage"]),
         ])
 
-    add_table(
-        allocation_data,
-        [4.5 * cm, 4 * cm, 4 * cm, 4 * cm],
+    sector_table = Table(
+        sector_data,
+        colWidths=[
+            4 * cm,
+            2.5 * cm,
+            2.5 * cm,
+            3.5 * cm,
+            2.5 * cm,
+        ]
     )
 
-    elements.append(
-        Paragraph("4. Confronto tra strategie", heading_style)
-    )
-
-    comparison_data = [
-        ["Indicatore", "Proporzionale", "Per priorità"],
-    ]
-
-    for sector in SECTORS:
-
-        comparison_data.append([
-            sector,
-            f"{comparison['proportional']['sectors'][sector]['allocated']:.2f} hm³",
-            f"{comparison['priority']['sectors'][sector]['allocated']:.2f} hm³",
+    sector_table.setStyle(
+        TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#176b87")),
+            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+            ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#ccd6e0")),
+            ("PADDING", (0, 0), (-1, -1), 6),
+            ("BACKGROUND", (0, 1), (-1, -1), colors.HexColor("#f4f8fb")),
         ])
-
-    add_table(
-        comparison_data,
-        [6 * cm, 5 * cm, 5 * cm],
     )
 
-    elements.append(
-        Paragraph("5. Ordine delle priorità", heading_style)
-    )
+    story.append(sector_table)
 
-    elements.append(
+    story.append(
         Paragraph(
-            " &gt; ".join(priority),
-            body_style,
+            "3. Interpretazione degli impatti",
+            styles["SectionTitle"]
         )
     )
 
-    elements.append(
-        Paragraph("6. Limiti e responsabilità", heading_style)
+    summary = generate_impact_summary(results)
+
+    story.append(
+        Paragraph(
+            str(summary).replace("&", "&amp;"),
+            styles["Normal"]
+        )
     )
 
-    notes = [
-        "Il documento utilizza parametri dimostrativi e non costituisce una misurazione ufficiale.",
-        "Le quote minime sono ipotesi del modello e non rappresentano automaticamente soglie normative.",
-        "La quota ambientale del modello non sostituisce le verifiche del deflusso ecologico.",
-        "Gli indicatori volumetrici non rappresentano perdite economiche monetarie.",
-        "Il sistema supporta il confronto tra scenari e non assume decisioni amministrative automatiche.",
-        "La decisione finale compete alle autorità responsabili.",
-    ]
+    story.append(Spacer(1, 15))
 
-    for note in notes:
-
-        elements.append(
-            Paragraph(f"• {note}", body_style)
+    story.append(
+        Paragraph(
+            "Nota metodologica",
+            styles["SectionTitle"]
         )
+    )
 
-        elements.append(Spacer(1, 4))
+    story.append(
+        Paragraph(
+            DISCLAIMER,
+            styles["Normal"]
+        )
+    )
 
-    document.build(elements)
+    story.append(Spacer(1, 8))
+
+    story.append(
+        Paragraph(
+            "Il presente documento è uno strumento di supporto "
+            "all'analisi. Le decisioni definitive restano di competenza "
+            "delle autorità responsabili.",
+            styles["Normal"]
+        )
+    )
+
+    document.build(story)
 
     buffer.seek(0)
 
-    return buffer.getvalue()
+    return buffer
 
 
 # ============================================================
-# INTESTAZIONE E NAVIGAZIONE
+# SIDEBAR E NAVIGAZIONE
 # ============================================================
 
-st.sidebar.title("💧 AQUA COMMONS AI")
+territory, region = get_territory()
 
-st.sidebar.caption(
-    "INTEGRATED WATER INTELLIGENCE PLATFORM"
-)
+with st.sidebar:
 
-st.sidebar.divider()
+    st.markdown("# 💧 AQUA COMMONS AI")
 
-page = st.sidebar.radio(
-    "NAVIGAZIONE",
-    [
-        "Overview Dashboard",
-        "Integrated Monitoring",
-        "Drought Early Warning",
-        "Geographical Intelligence",
-        "Allocation Simulator",
-        "Impact Analysis",
-        "Decision Report",
-    ],
-)
+    st.caption("Integrated Water Intelligence")
 
-st.sidebar.divider()
+    st.divider()
 
-st.sidebar.subheader("Configurazione territoriale")
+    st.markdown("### Configurazione")
 
-platform_mode = st.sidebar.selectbox(
-    "Modalità piattaforma",
-    PLATFORM_MODES,
-    index=PLATFORM_MODES.index(
-        st.session_state["platform_mode"]
-    ),
-    key="platform_mode_selector",
-)
+    platform_mode = st.selectbox(
+        "Modalità territoriale",
+        [
+            "Demo generica",
+            PILOT_MODE_LABEL,
+        ],
+        key="platform_mode",
+    )
 
-st.session_state["platform_mode"] = platform_mode
+    territory, region = get_territory()
 
-if platform_mode == "Analisi territoriale":
+    st.caption(f"Territorio: {territory}")
+    st.caption(f"Regione: {region}")
 
-    st.sidebar.write(f"Territorio pilota: {PILOT_TERRITORY}")
-    st.sidebar.write(f"Regione: {PILOT_REGION}")
+    st.divider()
 
-else:
+    page = st.radio(
+        "Navigazione",
+        [
+            "Overview Dashboard",
+            "Integrated Monitoring",
+            "Drought Early Warning",
+            "Geographical Intelligence",
+            "Allocation Simulator",
+            "Impact Analysis",
+            "Decision Report",
+        ],
+    )
 
-    st.sidebar.write("Demo territoriale generica")
+    st.divider()
 
-st.sidebar.divider()
-
-st.sidebar.caption(
-    "Versione dimostrativa | AQUA COMMONS AI"
-)
+    st.caption("AQUA COMMONS AI")
+    st.caption("Decision support for water governance")
 
 
 # ============================================================
-# RECUPERO DELLO SCENARIO
+# HEADER GENERALE
 # ============================================================
 
-availability, demands, minimums, priority = get_current_scenario()
+st.title("💧 AQUA COMMONS AI")
 
-valid_scenario, scenario_message = scenario_is_valid(
-    availability,
-    demands,
-    minimums,
-    priority,
+st.markdown(
+    APP_DESCRIPTION
+)
+
+st.caption(
+    f"Territorio analizzato: {territory} | {region}"
+)
+
+st.markdown(
+    f"""
+    <div class="warning-box">
+    <b>Modalità dimostrativa:</b> {DISCLAIMER}
+    </div>
+    """,
+    unsafe_allow_html=True,
 )
 
 
 # ============================================================
-# 01 - OVERVIEW DASHBOARD
+# 1. OVERVIEW DASHBOARD
 # ============================================================
 
 if page == "Overview Dashboard":
 
-    st.title("AQUA COMMONS AI")
-
-    st.subheader(
-        "Integrated Water Intelligence and Decision Support Platform"
-    )
+    st.header("Overview Dashboard")
 
     st.write(
-        "Piattaforma per il monitoraggio delle risorse idriche, "
-        "l'individuazione di condizioni di stress e il confronto "
-        "trasparente di scenari alternativi di allocazione."
+        "Una visione sintetica della disponibilità idrica, "
+        "della domanda settoriale e delle condizioni di allocazione."
     )
 
-    show_prototype_notice()
+    availability, demands, minimums = get_scenario_inputs()
 
-    st.divider()
-
-    st.subheader("Quadro generale dello scenario")
-
-    total_demand = sum(demands.values())
-    total_minimum = sum(minimums.values())
-
-    theoretical_shortage = max(
-        0.0,
-        total_demand - availability,
+    errors = validate_scenario(
+        availability,
+        demands,
+        minimums,
     )
 
-    theoretical_coverage = (
-        min(availability, total_demand) / total_demand * 100
-        if total_demand > 0
-        else 100.0
-    )
+    if errors:
 
-    c1, c2, c3, c4 = st.columns(4)
-
-    c1.metric(
-        "Disponibilità idrica",
-        f"{format_number(availability, 1)} hm³",
-    )
-
-    c2.metric(
-        "Domanda complessiva",
-        f"{format_number(total_demand, 1)} hm³",
-    )
-
-    c3.metric(
-        "Deficit teorico",
-        f"{format_number(theoretical_shortage, 1)} hm³",
-    )
-
-    c4.metric(
-        "Copertura teorica",
-        f"{format_number(theoretical_coverage, 1)}%",
-    )
-
-    if valid_scenario:
-
-        st.success(
-            "Scenario compatibile con i fabbisogni minimi impostati."
-        )
+        for error in errors:
+            st.error(error)
 
     else:
 
-        st.error(scenario_message)
-
-    st.divider()
-
-    st.subheader("Distribuzione della domanda")
-
-    demand_df = pd.DataFrame({
-        "Settore": SECTORS,
-        "Domanda": [demands[s] for s in SECTORS],
-        "Quota minima": [minimums[s] for s in SECTORS],
-    })
-
-    left, right = st.columns([1.3, 1])
-
-    with left:
-
-        st.bar_chart(
-            demand_df.set_index("Settore")[["Domanda"]]
+        results = calculate_results(
+            availability,
+            demands,
+            minimums,
+            strategy="proportional",
         )
 
-    with right:
+        display_results_metrics(results)
 
-        st.dataframe(
-            demand_df,
-            hide_index=True,
-            use_container_width=True,
-        )
+        st.divider()
 
-    st.divider()
+        col1, col2 = st.columns([1.4, 1])
 
-    st.subheader("Architettura funzionale")
+        with col1:
 
-    module_columns = st.columns(4)
+            st.subheader("Distribuzione idrica")
 
-    modules = [
-        (
-            "01",
-            "Integrated Monitoring",
-            "Integrazione dei dati idrologici, climatici e territoriali.",
-        ),
-        (
-            "02",
-            "Drought Early Warning",
-            "Individuazione di segnali di attenzione e stress idrico.",
-        ),
-        (
-            "03",
-            "Allocation Simulator",
-            "Confronto tra strategie di distribuzione della risorsa.",
-        ),
-        (
-            "04",
-            "Impact Analysis",
-            "Analisi degli effetti sui settori e sui diversi utilizzatori.",
-        ),
-    ]
+            dataframe = build_results_dataframe(results)
 
-    for column, module in zip(module_columns, modules):
+            chart_data = dataframe.set_index("Settore")[
+                ["Domanda", "Acqua assegnata"]
+            ]
 
-        with column:
+            st.bar_chart(chart_data)
 
-            st.markdown(
-                f"""
-                <div class="aqua-card">
-                    <h3>{module[0]}</h3>
-                    <b>{module[1]}</b>
-                    <p class="aqua-small">{module[2]}</p>
-                </div>
-                """,
-                unsafe_allow_html=True,
+        with col2:
+
+            st.subheader("Indicatori di sistema")
+
+            total_shortage = (
+                results["total_demand"]
+                - results["total_allocated"]
             )
 
-    st.caption(
-        "L'architettura attuale utilizza moduli deterministici e "
-        "regole di analisi. Non è ancora integrato un modello "
-        "predittivo di machine learning."
-    )
+            coverage = (
+                results["total_allocated"]
+                / results["total_demand"] * 100
+                if results["total_demand"] > 0
+                else 100
+            )
+
+            st.metric(
+                "Copertura della domanda",
+                f"{format_number(coverage)}%"
+            )
+
+            st.metric(
+                "Carenza idrica",
+                f"{format_number(total_shortage)} hm³"
+            )
+
+            if results["total_minimum"] <= results["total_allocated"]:
+                st.success(
+                    "I fabbisogni minimi risultano rispettati."
+                )
+            else:
+                st.error(
+                    "I fabbisogni minimi non risultano rispettati."
+                )
+
+        st.divider()
+
+        st.subheader("Quadro settoriale")
+
+        st.dataframe(
+            dataframe,
+            use_container_width=True,
+            hide_index=True,
+        )
+
+    st.divider()
+
+    st.subheader("Qualità e provenienza dei dati")
+
+    try:
+
+        data = get_analysis_data()
+
+        if data.empty:
+
+            st.info(
+                "Non sono disponibili record nel dataset selezionato."
+            )
+
+        else:
+
+            st.metric(
+                "Record disponibili",
+                len(data)
+            )
+
+            st.dataframe(
+                data,
+                use_container_width=True,
+                hide_index=True,
+            )
+
+    except Exception as error:
+
+        st.error(
+            f"Impossibile caricare i dati: {error}"
+        )
 
 
 # ============================================================
-# 02 - INTEGRATED MONITORING
+# 2. INTEGRATED MONITORING
 # ============================================================
 
 elif page == "Integrated Monitoring":
 
-    st.title("Integrated Monitoring")
+    st.header("Integrated Monitoring")
 
     st.write(
-        "Quadro integrato delle condizioni idrologiche, climatiche "
-        "e territoriali."
+        "Monitoraggio integrato delle condizioni idrologiche, "
+        "climatiche e territoriali."
     )
 
-    show_prototype_notice()
+    if st.button(
+        "Aggiorna monitoraggio",
+        type="primary",
+    ):
 
-    with st.spinner("Elaborazione del monitoraggio integrato..."):
+        st.session_state["refresh_monitoring"] = datetime.now().isoformat()
 
-        try:
+    try:
+
+        with st.spinner("Elaborazione dei dati integrati..."):
 
             monitoring_result = run_integrated_monitoring(
-                mode="simulated"
+                mode=DATA_MODE
             )
 
-            monitoring = monitoring_result["monitoring"]
-            summary = monitoring_result["summary"]
-            alerts = monitoring_result["alerts"]
+        monitoring = monitoring_result["monitoring"]
+        summary = monitoring_result["summary"]
+        alerts = monitoring_result["alerts"]
 
-        except Exception as error:
-
-            st.error(
-                "Non è stato possibile completare il monitoraggio integrato."
-            )
-
-            st.exception(error)
-
-            st.stop()
-
-    st.success("Elaborazione del monitoraggio completata.")
-
-    st.divider()
-
-    st.subheader("Provenienza dei dati")
-
-    data_status = summary.get(
-        "data_status",
-        monitoring.get("provenance", {}).get("status", "unknown"),
-    )
-
-    st.metric(
-        "Stato della provenienza",
-        show_data_status(data_status),
-    )
-
-    provenance = monitoring.get("provenance", {})
-
-    if provenance.get("message"):
-
-        st.caption(provenance["message"])
-
-    st.divider()
-
-    st.subheader("Indicatori idrologici")
-
-    hydrology = monitoring["hydrology"]
-
-    flow = hydrology["river_flow"]
-    reservoir = hydrology["reservoir_storage"]
-    groundwater = hydrology["groundwater_level"]
-
-    h1, h2, h3 = st.columns(3)
-
-    h1.metric(
-        "Portata fluviale",
-        f"{format_number(flow['latest_value'])} m³/s",
-        delta=f"{format_number(flow['variation_percentage'], 1)}%",
-    )
-
-    h2.metric(
-        "Riserve negli invasi",
-        f"{format_number(reservoir['latest_value'])} hm³",
-        delta=f"{format_number(reservoir['variation_percentage'], 1)}%",
-    )
-
-    h3.metric(
-        "Livello falde",
-        f"{format_number(groundwater['latest_value'])} m",
-        delta=f"{format_number(groundwater['variation_percentage'], 1)}%",
-    )
-
-    st.caption(
-        "Le variazioni rappresentano il confronto tra il primo e "
-        "l'ultimo dato del periodo dimostrativo."
-    )
-
-    st.divider()
-
-    st.subheader("Indicatori climatici")
-
-    climate = monitoring["climate"]
-
-    rainfall = climate["rainfall"]
-    temperature = climate["temperature"]
-
-    c1, c2, c3 = st.columns(3)
-
-    c1.metric(
-        "Precipitazioni osservate",
-        f"{format_number(rainfall['observed_mm'], 1)} mm",
-    )
-
-    c2.metric(
-        "Deficit pluviometrico",
-        f"{format_number(rainfall['deficit_percentage'], 1)}%",
-    )
-
-    c3.metric(
-        "Anomalia termica",
-        f"{format_number(temperature['anomaly_c'], 1)} °C",
-    )
-
-    st.divider()
-
-    st.subheader("Indice dimostrativo di attenzione")
-
-    drought = monitoring["drought"]
-
-    d1, d2, d3 = st.columns(3)
-
-    d1.metric(
-        "Indice di attenzione",
-        f"{drought['attention_index']}/100",
-    )
-
-    d2.metric(
-        "Livello di attenzione",
-        drought["attention_level"],
-    )
-
-    d3.metric(
-        "Segnali rilevati",
-        drought["signal_count"],
-    )
-
-    st.progress(
-        max(
-            0.0,
-            min(
-                1.0,
-                drought["attention_index"] / 100,
-            ),
-        )
-    )
-
-    st.caption(drought["method"])
-
-    st.divider()
-
-    st.subheader("Segnalazioni del sistema")
-
-    if alerts:
-
-        for alert in alerts:
-
-            message = alert.get(
-                "message",
-                str(alert),
-            )
-
-            severity = alert.get(
-                "severity",
-                "info",
-            )
-
-            if severity in ["high", "critical", "error"]:
-
-                st.error(message)
-
-            elif severity in ["warning", "medium"]:
-
-                st.warning(message)
-
-            else:
-
-                st.info(message)
-
-    else:
-
-        st.info(
-            "Non sono disponibili segnalazioni aggiuntive."
+        st.success(
+            "Monitoraggio elaborato correttamente."
         )
 
-    st.divider()
+        st.divider()
 
-    st.subheader("Sintesi del monitoraggio")
+        st.subheader("Indicatori principali")
 
-    st.write(
-        f"Punti geografici monitorati: "
-        f"**{summary.get('monitoring_points', 'N/D')}**"
-    )
+        col1, col2, col3, col4 = st.columns(4)
 
-    st.write(
-        f"Record temporali analizzati: "
-        f"**{summary.get('data_records', 'N/D')}**"
-    )
+        col1.metric(
+            "Indice di attenzione",
+            f"{format_number(summary.get('attention_index', 0))}/100"
+        )
 
-    st.caption(
-        "Il monitoraggio è dimostrativo. Le soglie e i valori "
-        "non costituiscono un sistema ufficiale di allerta."
-    )
+        col2.metric(
+            "Livello di attenzione",
+            str(summary.get("attention_level", "N/D"))
+        )
+
+        col3.metric(
+            "Segnali rilevati",
+            summary.get("signal_count", 0)
+        )
+
+        col4.metric(
+            "Punti geografici",
+            summary.get("monitoring_points", 0)
+        )
+
+        st.divider()
+
+        st.subheader("Condizioni idrologiche e climatiche")
+
+        col1, col2 = st.columns(2)
+
+        with col1:
+
+            st.markdown("#### Idrologia")
+
+            st.write(
+                "Variazione portata fluviale:",
+                format_number(
+                    summary.get("river_flow_variation", 0)
+                ) + "%"
+            )
+
+            st.write(
+                "Variazione invasi:",
+                format_number(
+                    summary.get("reservoir_variation", 0)
+                ) + "%"
+            )
+
+            st.write(
+                "Variazione falde:",
+                format_number(
+                    summary.get("groundwater_variation", 0)
+                ) + "%"
+            )
+
+        with col2:
+
+            st.markdown("#### Clima")
+
+            st.write(
+                "Deficit pluviometrico:",
+                format_number(
+                    summary.get("rainfall_deficit", 0)
+                ) + "%"
+            )
+
+            st.write(
+                "Anomalia termica:",
+                format_number(
+                    summary.get("temperature_anomaly", 0)
+                ) + " °C"
+            )
+
+        st.divider()
+
+        st.subheader("Provenienza dei dati")
+
+        provenance = monitoring.get("provenance", {})
+
+        st.write(
+            "Stato:",
+            summary.get(
+                "data_status",
+                provenance.get("status", "simulated")
+            )
+        )
+
+        st.write(
+            "Fonti:",
+            ", ".join(
+                summary.get(
+                    "data_sources",
+                    provenance.get("sources", [])
+                )
+            )
+        )
+
+        st.caption(
+            f"Record temporali disponibili: "
+            f"{summary.get('data_records', 0)}"
+        )
+
+        st.divider()
+
+        st.subheader("Serie temporali integrate")
+
+        integrated_series = monitoring.get(
+            "integrated_series"
+        )
+
+        if (
+            isinstance(integrated_series, pd.DataFrame)
+            and not integrated_series.empty
+        ):
+
+            st.dataframe(
+                integrated_series,
+                use_container_width=True,
+                hide_index=True,
+            )
+
+        else:
+
+            st.info(
+                "Non sono disponibili serie temporali integrate."
+            )
+
+        st.divider()
+
+        st.subheader("Segnalazioni del sistema")
+
+        if alerts:
+
+            for alert in alerts:
+
+                if isinstance(alert, dict):
+
+                    message = alert.get(
+                        "message",
+                        str(alert)
+                    )
+
+                    level = str(
+                        alert.get("level", "info")
+                    ).lower()
+
+                    if level in ["critical", "high", "elevato"]:
+                        st.error(message)
+
+                    elif level in ["warning", "moderate", "moderato"]:
+                        st.warning(message)
+
+                    else:
+                        st.info(message)
+
+                else:
+
+                    st.info(str(alert))
+
+        else:
+
+            st.info(
+                "Non sono presenti segnalazioni."
+            )
+
+    except Exception as error:
+
+        st.error(
+            f"Errore durante il monitoraggio integrato: {error}"
+        )
 
 
 # ============================================================
-# 03 - DROUGHT EARLY WARNING
+# 3. DROUGHT EARLY WARNING
 # ============================================================
 
 elif page == "Drought Early Warning":
 
-    st.title("Drought Early Warning System")
+    st.header("Drought Early Warning System")
 
     st.write(
-        "Individuazione di segnali di stress idrico attraverso "
-        "indicatori idrologici e climatici."
+        "Individuazione di condizioni potenzialmente critiche "
+        "attraverso indicatori idrologici e climatici."
     )
 
-    show_prototype_notice()
+    try:
 
-    with st.spinner("Valutazione delle condizioni idriche e climatiche..."):
-
-        try:
+        with st.spinner("Valutazione delle condizioni di stress idrico..."):
 
             drought = run_drought_assessment(
-                mode="simulated"
+                mode=DATA_MODE
             )
 
-        except Exception as error:
+        col1, col2, col3 = st.columns(3)
 
-            st.error(
-                "Impossibile completare la valutazione della siccità."
-            )
-
-            st.exception(error)
-
-            st.stop()
-
-    st.subheader("Livello di attenzione")
-
-    d1, d2, d3 = st.columns(3)
-
-    d1.metric(
-        "Indice di attenzione",
-        f"{drought['attention_index']}/100",
-    )
-
-    d2.metric(
-        "Classificazione",
-        drought["attention_level"],
-    )
-
-    d3.metric(
-        "Segnali rilevati",
-        drought["signal_count"],
-    )
-
-    st.progress(
-        drought["attention_index"] / 100
-    )
-
-    st.caption(drought["method"])
-
-    st.divider()
-
-    st.subheader("Segnali idrologici")
-
-    hydrological_signals = drought["hydrological_signals"]
-
-    if hydrological_signals:
-
-        for signal in hydrological_signals:
-
-            st.warning(
-                f"**{signal['indicator']}** — "
-                f"{format_number(signal['value'], 1)} "
-                f"{signal['unit']}. {signal['message']}"
-            )
-
-    else:
-
-        st.success(
-            "Non sono stati rilevati segnali idrologici "
-            "oltre le soglie dimostrative impostate."
+        col1.metric(
+            "Indice di attenzione",
+            f"{format_number(drought['attention_index'])}/100"
         )
 
-    st.divider()
-
-    st.subheader("Segnali climatici")
-
-    climatic_signals = drought["climatic_signals"]
-
-    if climatic_signals:
-
-        for signal in climatic_signals:
-
-            st.warning(
-                f"**{signal['indicator']}** — "
-                f"{format_number(signal['value'], 1)} "
-                f"{signal['unit']}. {signal['message']}"
-            )
-
-    else:
-
-        st.success(
-            "Non sono stati rilevati segnali climatici "
-            "oltre le soglie dimostrative impostate."
+        col2.metric(
+            "Livello di attenzione",
+            drought["attention_level"]
         )
 
-    st.divider()
+        col3.metric(
+            "Segnali rilevati",
+            drought["signal_count"]
+        )
 
-    st.subheader("Soglie di attenzione")
+        st.divider()
 
-    thresholds_df = pd.DataFrame([
-        {
-            "Indicatore": "Diminuzione portata fluviale",
-            "Soglia": f"{drought['thresholds']['river_flow_decline']}%",
-        },
-        {
-            "Indicatore": "Diminuzione riserve negli invasi",
-            "Soglia": f"{drought['thresholds']['reservoir_decline']}%",
-        },
-        {
-            "Indicatore": "Diminuzione livello falde",
-            "Soglia": f"{drought['thresholds']['groundwater_decline']}%",
-        },
-        {
-            "Indicatore": "Deficit pluviometrico",
-            "Soglia": f"{drought['thresholds']['rainfall_deficit']}%",
-        },
-        {
-            "Indicatore": "Anomalia termica",
-            "Soglia": f"{drought['thresholds']['temperature_anomaly']} °C",
-        },
-    ])
+        st.subheader("Indicatori di stress idrico")
 
-    st.dataframe(
-        thresholds_df,
-        hide_index=True,
-        use_container_width=True,
-    )
+        signals = drought.get("all_signals", [])
 
-    st.divider()
+        if signals:
 
-    st.subheader("Raccomandazioni preventive")
+            signal_rows = []
 
-    for recommendation in drought["recommendations"]:
+            for signal in signals:
 
-        st.markdown(f"- {recommendation}")
+                if isinstance(signal, dict):
 
-    st.warning(
-        "L'indice è dimostrativo e basato su soglie e pesi "
-        "predefiniti. Non è un indice scientifico ufficiale, "
-        "non produce previsioni e non costituisce un'allerta "
-        "istituzionale."
-    )
+                    signal_rows.append({
+                        "Indicatore": signal.get(
+                            "indicator",
+                            signal.get("name", "N/D")
+                        ),
+                        "Valore": signal.get(
+                            "value",
+                            "N/D"
+                        ),
+                        "Soglia": signal.get(
+                            "threshold",
+                            "N/D"
+                        ),
+                        "Condizione": signal.get(
+                            "status",
+                            signal.get("message", "N/D")
+                        ),
+                    })
+
+            if signal_rows:
+
+                st.dataframe(
+                    pd.DataFrame(signal_rows),
+                    use_container_width=True,
+                    hide_index=True,
+                )
+
+            else:
+
+                st.json(signals)
+
+        else:
+
+            st.info(
+                "Non sono stati rilevati segnali di attenzione."
+            )
+
+        st.divider()
+
+        st.subheader("Raccomandazioni preventive")
+
+        recommendations = drought.get(
+            "recommendations",
+            []
+        )
+
+        if recommendations:
+
+            for recommendation in recommendations:
+                st.markdown(
+                    f"- {recommendation}"
+                )
+
+        else:
+
+            st.info(
+                "Non sono disponibili raccomandazioni."
+            )
+
+        st.divider()
+
+        st.subheader("Metodo di valutazione")
+
+        st.write(
+            drought.get(
+                "method",
+                "Sistema deterministico basato su soglie e pesi dimostrativi."
+            )
+        )
+
+        st.warning(
+            "L'indice è un indicatore sperimentale di attenzione. "
+            "Le soglie e i pesi sono dimostrativi e non rappresentano "
+            "un indice scientifico ufficialmente calibrato. "
+            "Il sistema non effettua previsioni di siccità."
+        )
+
+    except Exception as error:
+
+        st.error(
+            f"Errore nella valutazione della siccità: {error}"
+        )
 
 
 # ============================================================
-# 04 - GEOGRAPHICAL INTELLIGENCE
+# 4. GEOGRAPHICAL INTELLIGENCE
 # ============================================================
 
 elif page == "Geographical Intelligence":
 
-    st.title("Geographical Intelligence")
+    st.header("Geographical Intelligence")
 
     st.write(
-        "Visualizzazione geografica dei punti dimostrativi "
-        "di monitoraggio idrologico, climatico e territoriale."
+        "Visualizzazione geografica dei punti di monitoraggio "
+        "idrologico, climatico e territoriale."
     )
 
-    show_prototype_notice()
-
-    st.subheader("Mappa interattiva")
+    st.markdown(
+        """
+        <div class="info-box">
+        La mappa permette di esplorare la distribuzione geografica
+        degli indicatori e delle infrastrutture monitorate.
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
     try:
 
         display_map(
             st,
-            mode="simulated",
+            mode=DATA_MODE
         )
 
     except Exception as error:
 
         st.error(
-            "Non è stato possibile caricare la mappa."
+            f"Errore durante la visualizzazione geografica: {error}"
         )
 
-        st.exception(error)
-
-    st.divider()
-
-    st.subheader("Informazioni territoriali")
-
-    try:
-
-        map_result = load_map_data(
-            mode="simulated"
-        )
-
-        map_summary = map_result["summary"]
-
-        m1, m2, m3 = st.columns(3)
-
-        m1.metric(
-            "Punti geografici",
-            map_summary["total_points"],
-        )
-
-        m2.metric(
-            "Categorie",
-            map_summary["categories"],
-        )
-
-        m3.metric(
-            "Coordinate valide",
-            map_summary["valid_coordinates"],
-        )
-
-        st.caption(
-            "Le coordinate sono illustrative e non identificano "
-            "necessariamente stazioni di monitoraggio reali."
-        )
-
-    except Exception as error:
-
-        st.warning(
-            "Non è stato possibile recuperare il riepilogo geografico."
-        )
-
-        st.exception(error)
+    st.warning(
+        "Le coordinate mostrate nella demo sono illustrative "
+        "e non identificano necessariamente stazioni o infrastrutture reali."
+    )
 
 
 # ============================================================
-# 05 - ALLOCATION SIMULATOR
+# 5. ALLOCATION SIMULATOR
 # ============================================================
 
 elif page == "Allocation Simulator":
 
-    st.title("Allocation Simulator")
+    st.header("Water Allocation Simulator")
 
     st.write(
-        "Simulazione e confronto di strategie alternative "
-        "di distribuzione della risorsa idrica."
+        "Simula la distribuzione della risorsa idrica tra i diversi "
+        "settori e confronta strategie alternative."
     )
-
-    show_prototype_notice()
 
     st.subheader("1. Disponibilità idrica")
 
-    availability_input = st.number_input(
-        "Disponibilità idrica totale (hm³)",
+    availability = st.number_input(
+        "Risorsa idrica disponibile (hm³)",
         min_value=0.0,
-        max_value=1000.0,
-        step=5.0,
+        max_value=100000.0,
+        step=1.0,
+        key="availability_input",
         value=float(
-            st.session_state["scenario_availability"]
+            st.session_state.scenario_availability
         ),
-        key="availability_editor",
     )
 
-    st.session_state["scenario_availability"] = availability_input
-
-    st.divider()
+    st.session_state.scenario_availability = availability
 
     st.subheader("2. Domanda e fabbisogni minimi")
 
-    for sector in SECTORS:
+    input_rows = []
 
-        st.markdown(f"**{sector}**")
+    for sector in SECTORS:
 
         col1, col2 = st.columns(2)
 
-        demand_key = f"scenario_demand_{sector}"
-        minimum_key = f"scenario_minimum_{sector}"
-
         with col1:
 
-            new_demand = st.number_input(
-                f"Domanda {sector} (hm³)",
+            demand = st.number_input(
+                f"Domanda - {sector} (hm³)",
                 min_value=0.0,
-                max_value=1000.0,
+                max_value=100000.0,
                 step=1.0,
-                value=float(st.session_state[demand_key]),
-                key=f"editor_demand_{sector}",
+                key=f"demand_input_{sector}",
+                value=float(
+                    st.session_state[f"scenario_demand_{sector}"]
+                ),
             )
 
         with col2:
 
-            new_minimum = st.number_input(
-                f"Quota minima {sector} (hm³)",
+            minimum = st.number_input(
+                f"Fabbisogno minimo - {sector} (hm³)",
                 min_value=0.0,
-                max_value=1000.0,
+                max_value=100000.0,
                 step=1.0,
-                value=float(st.session_state[minimum_key]),
-                key=f"editor_minimum_{sector}",
+                key=f"minimum_input_{sector}",
+                value=float(
+                    st.session_state[f"scenario_minimum_{sector}"]
+                ),
             )
 
-        st.session_state[demand_key] = new_demand
-        st.session_state[minimum_key] = new_minimum
+        st.session_state[f"scenario_demand_{sector}"] = demand
+        st.session_state[f"scenario_minimum_{sector}"] = minimum
 
-        if new_minimum > new_demand:
-
-            st.error(
-                f"La quota minima di {sector} non può superare "
-                "la domanda del settore."
-            )
-
-    st.divider()
-
-    st.subheader("3. Ordine delle priorità")
-
-    current_priority = list(
-        st.session_state["scenario_priority"]
-    )
-
-    priority_options = []
-
-    for index in range(len(SECTORS)):
-
-        current_value = current_priority[index]
-
-        available_options = [
-            sector
-            for sector in SECTORS
-            if sector not in priority_options
-            or sector == current_value
-        ]
-
-        selected = st.selectbox(
-            f"Priorità {index + 1}",
-            options=available_options,
-            index=available_options.index(current_value),
-            key=f"priority_editor_{index}",
-        )
-
-        priority_options.append(selected)
-
-    st.session_state["scenario_priority"] = priority_options
-
-    availability, demands, minimums, priority = get_current_scenario()
-
-    valid_scenario, scenario_message = scenario_is_valid(
-        availability,
-        demands,
-        minimums,
-        priority,
-    )
-
-    st.divider()
-
-    st.subheader("4. Riepilogo dei parametri")
-
-    total_demand = sum(demands.values())
-    total_minimum = sum(minimums.values())
-
-    c1, c2, c3 = st.columns(3)
-
-    c1.metric(
-        "Disponibilità",
-        f"{format_number(availability, 1)} hm³",
-    )
-
-    c2.metric(
-        "Domanda totale",
-        f"{format_number(total_demand, 1)} hm³",
-    )
-
-    c3.metric(
-        "Quote minime",
-        f"{format_number(total_minimum, 1)} hm³",
-    )
-
-    if not valid_scenario:
-
-        st.error(scenario_message)
-
-        st.stop()
-
-    st.success("Parametri dello scenario validi.")
-
-    st.divider()
-
-    st.subheader("5. Risultati delle strategie")
-
-    try:
-
-        proportional, priority_result = calculate_scenario_results(
-            availability,
-            demands,
-            minimums,
-            priority,
-        )
-
-    except Exception as error:
-
-        st.error(
-            "Errore durante il calcolo delle strategie."
-        )
-
-        st.exception(error)
-
-        st.stop()
-
-    tab1, tab2 = st.tabs([
-        "Allocazione proporzionale",
-        "Allocazione per priorità",
-    ])
-
-    with tab1:
-
-        st.markdown("#### Strategia proporzionale")
-
-        st.write(
-            "Dopo l'assegnazione delle quote minime, "
-            "la risorsa residua viene distribuita in proporzione "
-            "ai fabbisogni ancora insoddisfatti."
-        )
-
-        proportional_df = build_sector_dataframe(
-            proportional
-        )
-
-        st.dataframe(
-            proportional_df,
-            hide_index=True,
-            use_container_width=True,
-        )
-
-        st.bar_chart(
-            proportional_df.set_index("Settore")[
-                ["Domanda (hm³)", "Acqua assegnata (hm³)"]
-            ]
-        )
-
-    with tab2:
-
-        st.markdown("#### Strategia per priorità")
-
-        st.write(
-            "Dopo l'assegnazione delle quote minime, "
-            "la risorsa residua viene distribuita seguendo "
-            "l'ordine di priorità configurato."
-        )
-
-        priority_df = build_sector_dataframe(
-            priority_result
-        )
-
-        st.dataframe(
-            priority_df,
-            hide_index=True,
-            use_container_width=True,
-        )
-
-        st.bar_chart(
-            priority_df.set_index("Settore")[
-                ["Domanda (hm³)", "Acqua assegnata (hm³)"]
-            ]
-        )
-
-    st.divider()
-
-    st.subheader("6. Confronto tra strategie")
-
-    comparison = compare_strategies(
-        availability,
-        demands,
-        minimums,
-        priority,
-    )
-
-    comparison_df = pd.DataFrame([
-        {
-            "Indicatore": "Acqua assegnata",
-            "Proporzionale": proportional["total_allocated"],
-            "Per priorità": priority_result["total_allocated"],
-        },
-        {
-            "Indicatore": "Deficit complessivo",
-            "Proporzionale": proportional["total_demand"] - proportional["total_allocated"],
-            "Per priorità": priority_result["total_demand"] - priority_result["total_allocated"],
-        },
-    ])
-
-    st.dataframe(
-        comparison_df,
-        hide_index=True,
-        use_container_width=True,
-    )
-
-    st.caption(
-        "Le strategie sono strumenti di confronto. "
-        "La scelta effettiva deve considerare vincoli fisici, "
-        "normativi, ambientali e sociali."
-    )
-
-
-# ============================================================
-# 06 - IMPACT ANALYSIS
-# ============================================================
-
-elif page == "Impact Analysis":
-
-    st.title("Impact Analysis")
-
-    st.write(
-        "Valutazione degli effetti distributivi dell'allocazione "
-        "sui diversi settori utilizzatori."
-    )
-
-    show_prototype_notice()
-
-    if not valid_scenario:
-
-        st.error(scenario_message)
-
-        st.stop()
-
-    selected_strategy = st.selectbox(
-        "Strategia da analizzare",
-        [
-            "Allocazione proporzionale",
-            "Allocazione per priorità",
-        ],
-        key="impact_strategy",
-    )
-
-    strategy = (
-        "proportional"
-        if selected_strategy == "Allocazione proporzionale"
-        else "priority"
-    )
-
-    try:
-
-        results = get_strategy_results(
-            availability,
-            demands,
-            minimums,
-            priority,
-            strategy,
-        )
-
-        global_impacts = calculate_global_impacts(
-            results
-        )
-
-        sector_impacts = calculate_sector_impacts(
-            results
-        )
-
-        ai_analysis = run_integrated_analysis(
-            load_data("simulated"),
-            results,
-        )
-
-    except Exception as error:
-
-        st.error(
-            "Non è stato possibile completare l'analisi degli impatti."
-        )
-
-        st.exception(error)
-
-        st.stop()
-
-    st.divider()
-
-    st.subheader("1. Quadro generale")
-
-    c1, c2, c3, c4 = st.columns(4)
-
-    c1.metric(
-        "Domanda totale",
-        f"{format_number(global_impacts['total_demand'])} hm³",
-    )
-
-    c2.metric(
-        "Acqua assegnata",
-        f"{format_number(global_impacts['total_allocated'])} hm³",
-    )
-
-    c3.metric(
-        "Deficit totale",
-        f"{format_number(global_impacts['total_shortage'])} hm³",
-    )
-
-    c4.metric(
-        "Copertura della domanda",
-        f"{format_number(global_impacts['coverage'], 1)}%",
-    )
-
-    st.divider()
-
-    st.subheader("2. Impatti settoriali")
-
-    impact_rows = []
-
-    for sector in SECTORS:
-
-        impact = sector_impacts[sector]
-
-        impact_rows.append({
+        input_rows.append({
             "Settore": sector,
-            "Domanda (hm³)": impact["demand"],
-            "Assegnata (hm³)": impact["allocated"],
-            "Deficit (hm³)": impact["shortage"],
-            "Copertura (%)": impact["coverage"],
+            "Domanda": demand,
+            "Minimo": minimum,
         })
 
-    impact_df = pd.DataFrame(impact_rows)
+    demands = {
+        sector: st.session_state[f"scenario_demand_{sector}"]
+        for sector in SECTORS
+    }
 
-    st.dataframe(
-        impact_df,
-        hide_index=True,
-        use_container_width=True,
+    minimums = {
+        sector: st.session_state[f"scenario_minimum_{sector}"]
+        for sector in SECTORS
+    }
+
+    errors = validate_scenario(
+        availability,
+        demands,
+        minimums,
     )
 
-    st.bar_chart(
-        impact_df.set_index("Settore")[["Deficit (hm³)"]]
-    )
+    if errors:
 
-    st.divider()
-
-    st.subheader("3. Rischio rispetto alla domanda")
-
-    water_risk = ai_analysis["water_risk"]
-
-    r1, r2, r3 = st.columns(3)
-
-    r1.metric(
-        "Livello di rischio",
-        water_risk["risk_level"],
-    )
-
-    r2.metric(
-        "Domanda non soddisfatta",
-        f"{format_number(water_risk['shortage_percentage'], 1)}%",
-    )
-
-    r3.metric(
-        "Deficit",
-        f"{format_number(water_risk['total_shortage'])} hm³",
-    )
-
-    st.caption(water_risk["method"])
-
-    st.divider()
-
-    st.subheader("4. Distribuzione degli effetti")
-
-    scenario_analysis = ai_analysis["scenario_analysis"]
-
-    st.write(
-        f"Settore maggiormente interessato dal deficit: "
-        f"**{scenario_analysis['most_affected_sector']}**."
-    )
-
-    st.write(
-        f"Settore con il deficit assoluto minore: "
-        f"**{scenario_analysis['least_affected_sector']}**."
-    )
-
-    for observation in scenario_analysis["observations"]:
-
-        st.markdown(f"- {observation}")
-
-    st.divider()
-
-    st.subheader("5. Controllo dei dati")
-
-    quality = ai_analysis["data_quality"]
-
-    q1, q2 = st.columns(2)
-
-    q1.metric(
-        "Stato dei dati",
-        show_data_status(quality["status"]),
-    )
-
-    q2.metric(
-        "Record analizzati",
-        quality.get("records", 0),
-    )
-
-    st.write(quality["message"])
-
-    anomalies = ai_analysis["anomalies"]
-
-    if anomalies:
-
-        st.warning(
-            f"Rilevate {len(anomalies)} anomalie nei dati."
-        )
-
-        st.dataframe(
-            pd.DataFrame(anomalies),
-            hide_index=True,
-            use_container_width=True,
-        )
+        for error in errors:
+            st.error(error)
 
     else:
 
         st.success(
-            "Non sono state rilevate anomalie secondo i controlli implementati."
+            "Parametri dello scenario validi."
         )
 
-    st.divider()
+        st.divider()
 
-    st.subheader("6. Spiegazione della decisione")
+        st.subheader("3. Confronto delle strategie")
 
-    for explanation in ai_analysis["decision_explanation"]:
+        proportional_results = calculate_results(
+            availability,
+            demands,
+            minimums,
+            strategy="proportional",
+        )
 
-        st.markdown(f"- {explanation}")
+        priority_order = st.multiselect(
+            "Ordine di priorità per l'allocazione",
+            options=SECTORS,
+            default=SECTORS,
+            max_selections=len(SECTORS),
+        )
 
-    st.caption(
-        "Il motore attuale applica regole deterministiche e "
-        "calcoli matematici. Non è un modello predittivo addestrato."
-    )
+        if len(priority_order) != len(SECTORS):
+
+            st.warning(
+                "Seleziona tutti i settori per completare "
+                "il confronto delle strategie."
+            )
+
+        else:
+
+            priority_results = calculate_results(
+                availability,
+                demands,
+                minimums,
+                strategy="priority",
+                priority_order=priority_order,
+            )
+
+            tab1, tab2 = st.tabs([
+                "Allocazione proporzionale",
+                "Allocazione per priorità",
+            ])
+
+            with tab1:
+
+                st.subheader(
+                    "Distribuzione proporzionale"
+                )
+
+                display_results_metrics(
+                    proportional_results
+                )
+
+                st.dataframe(
+                    build_results_dataframe(
+                        proportional_results
+                    ),
+                    use_container_width=True,
+                    hide_index=True,
+                )
+
+                st.bar_chart(
+                    build_results_dataframe(
+                        proportional_results
+                    ).set_index("Settore")[
+                        ["Domanda", "Acqua assegnata"]
+                    ]
+                )
+
+            with tab2:
+
+                st.subheader(
+                    "Distribuzione secondo le priorità"
+                )
+
+                display_results_metrics(
+                    priority_results
+                )
+
+                st.dataframe(
+                    build_results_dataframe(
+                        priority_results
+                    ),
+                    use_container_width=True,
+                    hide_index=True,
+                )
+
+                st.bar_chart(
+                    build_results_dataframe(
+                        priority_results
+                    ).set_index("Settore")[
+                        ["Domanda", "Acqua assegnata"]
+                    ]
+                )
+
+            st.divider()
+
+            st.subheader(
+                "Differenze tra le strategie"
+            )
+
+            comparison_rows = []
+
+            for sector in SECTORS:
+
+                proportional = proportional_results[
+                    "sectors"
+                ][sector]["allocated"]
+
+                priority = priority_results[
+                    "sectors"
+                ][sector]["allocated"]
+
+                comparison_rows.append({
+                    "Settore": sector,
+                    "Proporzionale": proportional,
+                    "Per priorità": priority,
+                    "Differenza": priority - proportional,
+                })
+
+            st.dataframe(
+                pd.DataFrame(comparison_rows),
+                use_container_width=True,
+                hide_index=True,
+            )
+
+            st.info(
+                "Le strategie sono strumenti di confronto. "
+                "L'ordine di priorità deve riflettere vincoli normativi, "
+                "fabbisogni essenziali e obiettivi definiti "
+                "dall'autorità competente."
+            )
 
 
 # ============================================================
-# 07 - DECISION REPORT
+# 6. IMPACT ANALYSIS
+# ============================================================
+
+elif page == "Impact Analysis":
+
+    st.header("Impact Analysis")
+
+    st.write(
+        "Valutazione degli effetti distributivi delle diverse "
+        "strategie di allocazione."
+    )
+
+    availability, demands, minimums = get_scenario_inputs()
+
+    errors = validate_scenario(
+        availability,
+        demands,
+        minimums,
+    )
+
+    if errors:
+
+        for error in errors:
+            st.error(error)
+
+    else:
+
+        strategy_choice = st.selectbox(
+            "Strategia da analizzare",
+            [
+                "Proporzionale",
+                "Per priorità",
+            ],
+        )
+
+        if strategy_choice == "Proporzionale":
+
+            results = calculate_results(
+                availability,
+                demands,
+                minimums,
+                strategy="proportional",
+            )
+
+        else:
+
+            priority_order = st.multiselect(
+                "Ordine di priorità",
+                options=SECTORS,
+                default=SECTORS,
+                max_selections=len(SECTORS),
+            )
+
+            if len(priority_order) != len(SECTORS):
+
+                st.warning(
+                    "Seleziona tutti i settori per procedere."
+                )
+
+                results = None
+
+            else:
+
+                results = calculate_results(
+                    availability,
+                    demands,
+                    minimums,
+                    strategy="priority",
+                    priority_order=priority_order,
+                )
+
+        if results is not None:
+
+            impacts = calculate_global_impacts(
+                results
+            )
+
+            sector_impacts = calculate_sector_impacts(
+                results
+            )
+
+            st.divider()
+
+            st.subheader("Indicatori globali")
+
+            col1, col2, col3 = st.columns(3)
+
+            col1.metric(
+                "Domanda complessiva",
+                f"{format_number(impacts['total_demand'])} hm³"
+            )
+
+            col2.metric(
+                "Carenza complessiva",
+                f"{format_number(impacts['total_shortage'])} hm³"
+            )
+
+            col3.metric(
+                "Risorsa assegnata",
+                f"{format_number(impacts['total_allocated'])} hm³"
+            )
+
+            st.divider()
+
+            st.subheader("Impatto per settore")
+
+            impact_rows = []
+
+            for sector in SECTORS:
+
+                impact = sector_impacts[sector]
+                allocation = results["sectors"][sector]
+
+                impact_rows.append({
+                    "Settore": sector,
+                    "Domanda": allocation["demand"],
+                    "Assegnazione": allocation["allocated"],
+                    "Carenza": allocation["shortage"],
+                    "Copertura (%)": allocation["coverage"],
+                })
+
+            impact_df = pd.DataFrame(
+                impact_rows
+            )
+
+            st.dataframe(
+                impact_df,
+                use_container_width=True,
+                hide_index=True,
+            )
+
+            st.bar_chart(
+                impact_df.set_index("Settore")[
+                    ["Carenza"]
+                ]
+            )
+
+            st.divider()
+
+            st.subheader("Analisi deterministica")
+
+            try:
+
+                data = get_analysis_data()
+
+                analysis = run_integrated_analysis(
+                    data,
+                    results,
+                )
+
+                data_quality = analysis.get(
+                    "data_quality",
+                    {}
+                )
+
+                water_risk = analysis.get(
+                    "water_risk",
+                    {}
+                )
+
+                st.write(
+                    "Qualità dei dati:",
+                    data_quality.get(
+                        "status",
+                        "N/D"
+                    )
+                )
+
+                st.write(
+                    "Valutazione del rischio:",
+                    water_risk
+                )
+
+                st.write(
+                    "Tipo di analisi:",
+                    analysis.get(
+                        "analysis_type",
+                        "deterministic_rule_based"
+                    )
+                )
+
+                if analysis.get("is_predictive_model") is False:
+
+                    st.caption(
+                        "L'analisi utilizza regole deterministiche. "
+                        "Non è un modello predittivo addestrato."
+                    )
+
+            except Exception as error:
+
+                st.error(
+                    f"Errore nell'analisi integrata: {error}"
+                )
+
+            st.divider()
+
+            st.subheader("Interpretazione degli impatti")
+
+            try:
+
+                summary = generate_impact_summary(
+                    results
+                )
+
+                st.write(summary)
+
+            except Exception:
+
+                st.write(
+                    "La strategia selezionata produce una distribuzione "
+                    "della risorsa che può essere confrontata tra i settori "
+                    "attraverso i valori di domanda, assegnazione e carenza."
+                )
+
+            st.warning(
+                "La piattaforma non attribuisce automaticamente "
+                "valori monetari ai danni economici e sociali. "
+                "Gli impatti economici richiedono dati territoriali "
+                "e settoriali verificati."
+            )
+
+
+# ============================================================
+# 7. DECISION REPORT
 # ============================================================
 
 elif page == "Decision Report":
 
-    st.title("Decision Report")
+    st.header("Decision Report")
 
     st.write(
-        "Generazione di un documento strutturato per confrontare "
-        "gli scenari di allocazione e i relativi effetti."
+        "Generazione di un report sintetico a supporto "
+        "della valutazione delle decisioni di allocazione."
     )
 
-    show_prototype_notice()
+    availability, demands, minimums = get_scenario_inputs()
 
-    if not valid_scenario:
-
-        st.error(scenario_message)
-
-        st.stop()
-
-    report_strategy_name = st.selectbox(
-        "Strategia da approfondire",
-        [
-            "Allocazione proporzionale",
-            "Allocazione per priorità",
-        ],
-        key="report_strategy",
+    errors = validate_scenario(
+        availability,
+        demands,
+        minimums,
     )
 
-    report_strategy = (
-        "proportional"
-        if report_strategy_name == "Allocazione proporzionale"
-        else "priority"
-    )
+    if errors:
 
-    try:
+        for error in errors:
+            st.error(error)
 
-        results = get_strategy_results(
-            availability,
-            demands,
-            minimums,
-            priority,
-            report_strategy,
+    else:
+
+        strategy_choice = st.selectbox(
+            "Strategia di allocazione per il report",
+            [
+                "Proporzionale",
+                "Per priorità",
+            ],
+            key="report_strategy",
         )
 
-        comparison = compare_strategies(
-            availability,
-            demands,
-            minimums,
-            priority,
-        )
+        priority_order = SECTORS
 
-    except Exception as error:
+        if strategy_choice == "Per priorità":
 
-        st.error(
-            "Non è stato possibile preparare il report."
-        )
+            priority_order = st.multiselect(
+                "Ordine di priorità",
+                options=SECTORS,
+                default=SECTORS,
+                max_selections=len(SECTORS),
+                key="report_priority_order",
+            )
 
-        st.exception(error)
+        if (
+            strategy_choice == "Per priorità"
+            and len(priority_order) != len(SECTORS)
+        ):
 
-        st.stop()
+            st.warning(
+                "Seleziona tutti i settori per generare il report."
+            )
 
-    global_impacts = calculate_global_impacts(
-        results
-    )
+        else:
 
-    st.divider()
+            if strategy_choice == "Proporzionale":
 
-    st.subheader("1. Sintesi dello scenario")
+                results = calculate_results(
+                    availability,
+                    demands,
+                    minimums,
+                    strategy="proportional",
+                )
 
-    c1, c2, c3, c4 = st.columns(4)
+            else:
 
-    c1.metric(
-        "Disponibilità",
-        f"{format_number(availability)} hm³",
-    )
+                results = calculate_results(
+                    availability,
+                    demands,
+                    minimums,
+                    strategy="priority",
+                    priority_order=priority_order,
+                )
 
-    c2.metric(
-        "Domanda",
-        f"{format_number(global_impacts['total_demand'])} hm³",
-    )
+            impacts = calculate_global_impacts(
+                results
+            )
 
-    c3.metric(
-        "Acqua assegnata",
-        f"{format_number(global_impacts['total_allocated'])} hm³",
-    )
+            st.divider()
 
-    c4.metric(
-        "Deficit",
-        f"{format_number(global_impacts['total_shortage'])} hm³",
-    )
+            st.subheader("Anteprima del report")
 
-    st.write(
-        f"**Strategia:** {report_strategy_name}"
-    )
+            st.markdown(
+                f"**Territorio:** {territory}"
+            )
 
-    st.write(
-        f"**Ordine di priorità:** {' > '.join(priority)}"
-    )
+            st.markdown(
+                f"**Regione:** {region}"
+            )
 
-    st.divider()
+            st.markdown(
+                f"**Strategia:** {strategy_choice}"
+            )
 
-    st.subheader("2. Risultati settoriali")
+            display_results_metrics(
+                results
+            )
 
-    results_df = build_sector_dataframe(
-        results
-    )
+            st.dataframe(
+                build_results_dataframe(results),
+                use_container_width=True,
+                hide_index=True,
+            )
 
-    st.dataframe(
-        results_df,
-        hide_index=True,
-        use_container_width=True,
-    )
+            st.divider()
 
-    st.bar_chart(
-        results_df.set_index("Settore")[
-            ["Domanda (hm³)", "Acqua assegnata (hm³)"]
-        ]
-    )
+            st.subheader("Sintesi decisionale")
 
-    st.divider()
+            try:
 
-    st.subheader("3. Confronto tra strategie")
+                data = get_analysis_data()
 
-    comparison_data = []
+                analysis = run_integrated_analysis(
+                    data,
+                    results,
+                )
 
-    for sector in SECTORS:
+                explanation = analysis.get(
+                    "decision_explanation",
+                    "Analisi completata."
+                )
 
-        comparison_data.append({
-            "Settore": sector,
-            "Acqua proporzionale (hm³)": comparison["proportional"]["sectors"][sector]["allocated"],
-            "Acqua per priorità (hm³)": comparison["priority"]["sectors"][sector]["allocated"],
-            "Differenza (hm³)": comparison["priority"]["sectors"][sector]["allocated"] - comparison["proportional"]["sectors"][sector]["allocated"],
-        })
+                st.write(explanation)
 
-    comparison_df = pd.DataFrame(
-        comparison_data
-    )
+            except Exception as error:
 
-    st.dataframe(
-        comparison_df,
-        hide_index=True,
-        use_container_width=True,
-    )
+                st.warning(
+                    f"Impossibile generare la spiegazione automatica: {error}"
+                )
 
-    st.divider()
+            st.divider()
 
-    st.subheader("4. Impatti e responsabilità")
+            st.subheader("Esportazione")
 
-    sector_impacts = calculate_sector_impacts(
-        results
-    )
+            try:
 
-    for sector in SECTORS:
+                pdf = create_pdf_report(
+                    territory,
+                    region,
+                    results,
+                    impacts,
+                    strategy_choice,
+                )
 
-        impact = sector_impacts[sector]
+                st.download_button(
+                    label="📄 Scarica Decision Report PDF",
+                    data=pdf,
+                    file_name="AQUA_COMMONS_AI_Decision_Report.pdf",
+                    mime="application/pdf",
+                    type="primary",
+                )
 
-        st.write(
-            f"**{sector}:** deficit di "
-            f"{format_number(impact['shortage'])} hm³ "
-            f"e copertura del "
-            f"{format_number(impact['coverage'], 1)}%."
-        )
+            except Exception as error:
 
-    st.warning(
-        "Il modello non determina automaticamente la distribuzione "
-        "effettiva della risorsa. La valutazione finale deve considerare "
-        "normativa applicabile, fabbisogni essenziali, deflussi ecologici, "
-        "disponibilità fisica e competenze delle autorità."
-    )
+                st.error(
+                    f"Errore nella generazione del PDF: {error}"
+                )
 
-    st.divider()
 
-    st.subheader("5. Esportazione del documento")
+# ============================================================
+# FOOTER
+# ============================================================
 
-    try:
+st.divider()
 
-        pdf_bytes = generate_pdf_report(
-            results,
-            availability,
-            demands,
-            minimums,
-            priority,
-            report_strategy_name,
-            comparison,
-        )
-
-        st.download_button(
-            label="📄 Scarica Decision Report in PDF",
-            data=pdf_bytes,
-            file_name="AQUA_COMMONS_AI_Decision_Report.pdf",
-            mime="application/pdf",
-            use_container_width=True,
-        )
-
-    except Exception as error:
-
-        st.error(
-            "Non è stato possibile generare il PDF."
-        )
-
-        st.exception(error)
-
-    st.caption(
-        "Il documento viene generato utilizzando i parametri "
-        "dello scenario attualmente configurato."
-    )
+st.markdown(
+    """
+    <div style="text-align:center; color:#718096; padding:10px;">
+        <b>AQUA COMMONS AI</b><br>
+        Integrated Water Intelligence and Decision Support Platform<br>
+        <span style="font-size:0.8rem;">
+        Human-centred water governance · Transparency · Sustainability
+        </span>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
