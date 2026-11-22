@@ -4,6 +4,8 @@
 # Motore centrale di analisi e supporto decisionale
 # ============================================================
 
+from math import isfinite
+
 from core.config import SECTORS
 
 from core.impact import (
@@ -14,17 +16,46 @@ from core.impact import (
 
 
 # ============================================================
+# COLONNE NECESSARIE PER L'ANALISI DEI DATI
+# ============================================================
+
+REQUIRED_DATA_COLUMNS = [
+    "name",
+    "value",
+    "source",
+    "data_type",
+]
+
+
+# ============================================================
 # 1. DATA INTELLIGENCE
 # ============================================================
 
 def analyze_data_quality(data):
 
-    if data.empty:
+    if data is None or data.empty:
 
         return {
             "status": "error",
             "message": "Non sono disponibili dati da analizzare.",
             "records": 0,
+        }
+
+    missing_columns = [
+        column
+        for column in REQUIRED_DATA_COLUMNS
+        if column not in data.columns
+    ]
+
+    if missing_columns:
+
+        return {
+            "status": "error",
+            "message": (
+                "Mancano alcune colonne necessarie: "
+                + ", ".join(missing_columns)
+            ),
+            "records": len(data),
         }
 
     records = len(data)
@@ -41,15 +72,24 @@ def analyze_data_quality(data):
         (data["data_type"] == "manual").sum()
     )
 
-    sources = data["source"].nunique()
+    sources = int(
+        data["source"].nunique()
+    )
 
     if simulated == records:
+
         status = "simulated"
 
     elif official == records:
+
         status = "official"
 
+    elif manual == records:
+
+        status = "manual"
+
     else:
+
         status = "hybrid"
 
     return {
@@ -59,9 +99,7 @@ def analyze_data_quality(data):
         "official_records": official,
         "manual_records": manual,
         "sources": sources,
-        "message": (
-            "Dataset analizzato correttamente."
-        ),
+        "message": "Dataset analizzato correttamente.",
     }
 
 
@@ -73,17 +111,59 @@ def detect_anomalies(data):
 
     anomalies = []
 
-    if data.empty:
+    if data is None or data.empty:
         return anomalies
 
-    for _, row in data.iterrows():
+    missing_columns = [
+        column
+        for column in ["name", "value"]
+        if column not in data.columns
+    ]
 
-        value = row["value"]
+    if missing_columns:
 
-        if value < 0:
+        raise ValueError(
+            "Impossibile rilevare anomalie. "
+            "Mancano le colonne: "
+            + ", ".join(missing_columns)
+        )
+
+    for index, row in data.iterrows():
+
+        variable = str(row["name"])
+        raw_value = row["value"]
+
+        try:
+
+            value = float(raw_value)
+
+        except (TypeError, ValueError):
 
             anomalies.append({
-                "variable": row["name"],
+                "row": int(index) if isinstance(index, int) else str(index),
+                "variable": variable,
+                "value": str(raw_value),
+                "problem": "Valore mancante o non numerico.",
+                "severity": "high",
+            })
+
+            continue
+
+        if not isfinite(value):
+
+            anomalies.append({
+                "row": int(index) if isinstance(index, int) else str(index),
+                "variable": variable,
+                "value": str(raw_value),
+                "problem": "Valore non finito o non valido.",
+                "severity": "high",
+            })
+
+        elif value < 0:
+
+            anomalies.append({
+                "row": int(index) if isinstance(index, int) else str(index),
+                "variable": variable,
                 "value": value,
                 "problem": "Valore negativo non ammesso.",
                 "severity": "high",
@@ -107,7 +187,7 @@ def assess_water_risk(results):
     shortage_percentage = (
         shortage / demand * 100
         if demand > 0
-        else 0
+        else 0.0
     )
 
     if shortage_percentage == 0:
@@ -132,8 +212,10 @@ def assess_water_risk(results):
         "total_shortage": shortage,
         "total_demand": demand,
         "method": (
-            "Classificazione dimostrativa basata "
-            "sulla percentuale di domanda non soddisfatta."
+            "Classificazione dimostrativa basata sulla "
+            "percentuale di domanda non soddisfatta. "
+            "Non rappresenta un indice scientifico "
+            "di siccità o una previsione."
         ),
     }
 
@@ -211,8 +293,8 @@ def compare_scenarios(first_results, second_results):
 
     sector_effects = comparison["sectors"]
 
-    winners = []
-    losers = []
+    sectors_receiving_more = []
+    sectors_receiving_less = []
 
     for sector in SECTORS:
 
@@ -220,18 +302,18 @@ def compare_scenarios(first_results, second_results):
             "allocation_difference"
         ]
 
-        if difference > 0:
+        if difference > 1e-9:
 
-            winners.append(sector)
+            sectors_receiving_more.append(sector)
 
-        elif difference < 0:
+        elif difference < -1e-9:
 
-            losers.append(sector)
+            sectors_receiving_less.append(sector)
 
     return {
         "comparison": comparison,
-        "sectors_receiving_more": winners,
-        "sectors_receiving_less": losers,
+        "sectors_receiving_more": sectors_receiving_more,
+        "sectors_receiving_less": sectors_receiving_less,
     }
 
 
@@ -255,7 +337,8 @@ def generate_decision_explanation(results):
     explanation = []
 
     explanation.append(
-        f"Livello di rischio idrico: {risk['risk_level']}."
+        f"Livello di rischio rispetto alla domanda: "
+        f"{risk['risk_level']}."
     )
 
     explanation.append(
@@ -287,12 +370,18 @@ def generate_decision_explanation(results):
     else:
 
         explanation.append(
-            "ATTENZIONE: alcuni fabbisogni minimi non risultano rispettati."
+            "ATTENZIONE: alcuni fabbisogni minimi "
+            "non risultano rispettati."
         )
 
     explanation.append(
-        "Questa analisi è un supporto tecnico: "
-        "non costituisce una decisione amministrativa "
+        "La classificazione del rischio è dimostrativa "
+        "e basata sul deficit di allocazione."
+    )
+
+    explanation.append(
+        "Questa analisi costituisce un supporto tecnico: "
+        "non rappresenta una decisione amministrativa "
         "e non sostituisce la valutazione dell'autorità competente."
     )
 
@@ -323,4 +412,6 @@ def run_integrated_analysis(data, results):
         "water_risk": water_risk,
         "scenario_analysis": scenario,
         "decision_explanation": decision_explanation,
+        "analysis_type": "deterministic_rule_based",
+        "is_predictive_model": False,
     }
