@@ -150,7 +150,9 @@ def prepare_map_points(data):
     if name_column is not None:
 
         map_data["name"] = (
-            data[name_column].fillna("Punto senza nome").astype(str)
+            data[name_column]
+            .fillna("Punto senza nome")
+            .astype(str)
         )
 
     else:
@@ -160,14 +162,14 @@ def prepare_map_points(data):
     if category_column is not None:
 
         map_data["category"] = (
-            data[category_column].fillna("Altro").astype(str)
+            data[category_column]
+            .fillna("Altro")
+            .astype(str)
         )
 
     else:
 
         map_data["category"] = "Altro"
-
-    # Elimina coordinate mancanti.
 
     map_data = map_data.dropna(
         subset=[
@@ -175,8 +177,6 @@ def prepare_map_points(data):
             "longitude",
         ]
     )
-
-    # Controlla i limiti geografici validi.
 
     map_data = map_data[
         map_data["latitude"].between(-90, 90)
@@ -194,18 +194,6 @@ def prepare_map_points(data):
 # ============================================================
 
 def validate_map_points(map_data):
-
-    if map_data.empty:
-
-        return {
-
-            "valid": False,
-
-            "total_points": 0,
-
-            "message": "Nessun punto geografico disponibile.",
-
-        }
 
     required_columns = [
         "latitude",
@@ -228,6 +216,8 @@ def validate_map_points(map_data):
 
             "total_points": len(map_data),
 
+            "valid_coordinates": 0,
+
             "message": (
                 "Colonne mancanti: "
                 + ", ".join(missing_columns)
@@ -235,25 +225,45 @@ def validate_map_points(map_data):
 
         }
 
+    if map_data.empty:
+
+        return {
+
+            "valid": False,
+
+            "total_points": 0,
+
+            "valid_coordinates": 0,
+
+            "message": "Nessun punto geografico disponibile.",
+
+        }
+
     coordinates_valid = (
-        map_data["latitude"].between(-90, 90).all()
-        and
-        map_data["longitude"].between(-180, 180).all()
+        map_data["latitude"].between(-90, 90)
+        &
+        map_data["longitude"].between(-180, 180)
+    )
+
+    valid_count = int(
+        coordinates_valid.sum()
+    )
+
+    all_valid = bool(
+        coordinates_valid.all()
     )
 
     return {
 
-        "valid": bool(coordinates_valid),
+        "valid": all_valid,
 
         "total_points": len(map_data),
 
-        "categories": sorted(
-            map_data["category"].unique().tolist()
-        ),
+        "valid_coordinates": valid_count,
 
         "message": (
             "Coordinate valide."
-            if coordinates_valid
+            if all_valid
             else "Sono presenti coordinate non valide."
         ),
 
@@ -295,7 +305,11 @@ def get_map_summary(map_data):
 
             "total_points": 0,
 
-            "categories": {},
+            "categories": 0,
+
+            "category_breakdown": {},
+
+            "valid_coordinates": 0,
 
             "center_latitude": None,
 
@@ -309,11 +323,23 @@ def get_map_summary(map_data):
         .to_dict()
     )
 
+    valid_coordinates = (
+        map_data["latitude"].between(-90, 90)
+        &
+        map_data["longitude"].between(-180, 180)
+    )
+
     return {
 
         "total_points": len(map_data),
 
-        "categories": category_counts,
+        "categories": len(category_counts),
+
+        "category_breakdown": category_counts,
+
+        "valid_coordinates": int(
+            valid_coordinates.sum()
+        ),
 
         "center_latitude": float(
             map_data["latitude"].mean()
