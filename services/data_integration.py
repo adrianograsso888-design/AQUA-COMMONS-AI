@@ -7,17 +7,9 @@
 
 import pandas as pd
 
-from services.hydrology import (
-    get_hydrology_data,
-)
-
-from services.climate import (
-    get_climate_data,
-)
-
-from services.geography import (
-    get_geography_data,
-)
+from services.hydrology import get_hydrology_data
+from services.climate import get_climate_data
+from services.geography import get_geography_data
 
 
 # ============================================================
@@ -27,9 +19,7 @@ from services.geography import (
 def load_integrated_data(mode="simulated"):
 
     hydrology = get_hydrology_data(mode)
-
     climate = get_climate_data(mode)
-
     geography = get_geography_data(mode)
 
     return {
@@ -46,7 +36,6 @@ def load_integrated_data(mode="simulated"):
 def integrate_time_series(hydrology_data, climate_data):
 
     hydrology = hydrology_data.copy()
-
     climate = climate_data.copy()
 
     hydrology["date"] = pd.to_datetime(
@@ -84,15 +73,53 @@ def analyze_data_provenance(data):
             "status": "empty",
             "message": "Nessun dato disponibile.",
             "sources": [],
+            "data_types": [],
+            "total_dates": 0,
         }
 
-    data_types = set(data["data_type"].dropna())
+    # Recupera le colonne anche dopo la fusione
+    # delle serie temporali.
 
-    sources = sorted(
-        data["source"].dropna().unique().tolist()
-    )
+    type_columns = [
+        column
+        for column in [
+            "data_type",
+            "data_type_hydrology",
+            "data_type_climate",
+        ]
+        if column in data.columns
+    ]
 
-    if data_types == {"simulated"}:
+    source_columns = [
+        column
+        for column in [
+            "source",
+            "source_hydrology",
+            "source_climate",
+        ]
+        if column in data.columns
+    ]
+
+    data_types = set()
+
+    for column in type_columns:
+
+        data_types.update(
+            data[column].dropna().astype(str).unique()
+        )
+
+    sources = set()
+
+    for column in source_columns:
+
+        sources.update(
+            data[column].dropna().astype(str).unique()
+        )
+
+    sources = sorted(sources)
+    data_types = sorted(data_types)
+
+    if data_types == ["simulated"]:
 
         status = "simulated"
 
@@ -100,12 +127,20 @@ def analyze_data_provenance(data):
             "Il dataset contiene esclusivamente dati simulati."
         )
 
-    elif data_types == {"official"}:
+    elif data_types == ["official"]:
 
         status = "official"
 
         message = (
             "Il dataset contiene esclusivamente dati ufficiali."
+        )
+
+    elif not data_types:
+
+        status = "unknown"
+
+        message = (
+            "La tipologia dei dati non è disponibile."
         )
 
     else:
@@ -120,8 +155,8 @@ def analyze_data_provenance(data):
         "status": status,
         "message": message,
         "sources": sources,
-        "data_types": sorted(data_types),
-        "total_records": len(data),
+        "data_types": data_types,
+        "total_dates": len(data),
     }
 
 
