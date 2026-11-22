@@ -1,4 +1,3 @@
-
 # ============================================================
 # AQUA COMMONS AI
 # CONFIGURAZIONE GENERALE DELLA PIATTAFORMA
