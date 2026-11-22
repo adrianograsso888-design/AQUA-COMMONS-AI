@@ -1,3 +1,4 @@
+
 # ============================================================
 # AQUA COMMONS AI
 # AI ENGINE
@@ -39,6 +40,11 @@ def analyze_data_quality(data):
             "status": "error",
             "message": "Non sono disponibili dati da analizzare.",
             "records": 0,
+            "sources": [],
+            "source_count": 0,
+            "simulated_records": 0,
+            "official_records": 0,
+            "manual_records": 0,
         }
 
     missing_columns = [
@@ -56,6 +62,8 @@ def analyze_data_quality(data):
                 + ", ".join(missing_columns)
             ),
             "records": len(data),
+            "sources": [],
+            "source_count": 0,
         }
 
     records = len(data)
@@ -72,9 +80,17 @@ def analyze_data_quality(data):
         (data["data_type"] == "manual").sum()
     )
 
-    sources = int(
-        data["source"].nunique()
+    # CORREZIONE:
+    # sources deve essere una lista e non un intero.
+    sources = sorted(
+        data["source"]
+        .dropna()
+        .astype(str)
+        .unique()
+        .tolist()
     )
+
+    source_count = len(sources)
 
     if simulated == records:
 
@@ -99,6 +115,7 @@ def analyze_data_quality(data):
         "official_records": official,
         "manual_records": manual,
         "sources": sources,
+        "source_count": source_count,
         "message": "Dataset analizzato correttamente.",
     }
 
@@ -112,6 +129,7 @@ def detect_anomalies(data):
     anomalies = []
 
     if data is None or data.empty:
+
         return anomalies
 
     missing_columns = [
@@ -140,7 +158,7 @@ def detect_anomalies(data):
         except (TypeError, ValueError):
 
             anomalies.append({
-                "row": int(index) if isinstance(index, int) else str(index),
+                "row": str(index),
                 "variable": variable,
                 "value": str(raw_value),
                 "problem": "Valore mancante o non numerico.",
@@ -152,7 +170,7 @@ def detect_anomalies(data):
         if not isfinite(value):
 
             anomalies.append({
-                "row": int(index) if isinstance(index, int) else str(index),
+                "row": str(index),
                 "variable": variable,
                 "value": str(raw_value),
                 "problem": "Valore non finito o non valido.",
@@ -162,7 +180,7 @@ def detect_anomalies(data):
         elif value < 0:
 
             anomalies.append({
-                "row": int(index) if isinstance(index, int) else str(index),
+                "row": str(index),
                 "variable": variable,
                 "value": value,
                 "problem": "Valore negativo non ammesso.",
