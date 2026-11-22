@@ -13,35 +13,49 @@ from core.config import SECTORS
 
 def validate_inputs(availability, demands, minimums):
 
+    availability = float(availability)
+
     if availability < 0:
-        raise ValueError("La disponibilità idrica non può essere negativa.")
+        raise ValueError(
+            "La disponibilità idrica non può essere negativa."
+        )
 
     if set(demands.keys()) != set(SECTORS):
-        raise ValueError("Le domande devono includere tutti i settori.")
+        raise ValueError(
+            "Le domande devono includere tutti i settori."
+        )
 
     if set(minimums.keys()) != set(SECTORS):
-        raise ValueError("I fabbisogni minimi devono includere tutti i settori.")
+        raise ValueError(
+            "I fabbisogni minimi devono includere tutti i settori."
+        )
 
     for sector in SECTORS:
 
-        if demands[sector] < 0:
+        demand = float(demands[sector])
+        minimum = float(minimums[sector])
+
+        if demand < 0:
             raise ValueError(
                 f"La domanda di {sector} non può essere negativa."
             )
 
-        if minimums[sector] < 0:
+        if minimum < 0:
             raise ValueError(
                 f"Il fabbisogno minimo di {sector} non può essere negativo."
             )
 
-        if minimums[sector] > demands[sector]:
+        if minimum > demand:
             raise ValueError(
                 f"Il minimo di {sector} supera la sua domanda."
             )
 
-    total_minimum = sum(minimums.values())
+    total_minimum = sum(
+        float(minimums[sector])
+        for sector in SECTORS
+    )
 
-    if total_minimum > availability:
+    if total_minimum > availability + 1e-9:
         raise ValueError(
             "Allocazione impossibile: la disponibilità è inferiore "
             "alla somma dei fabbisogni minimi."
@@ -56,29 +70,69 @@ def proportional_allocation(availability, demands, minimums):
 
     validate_inputs(availability, demands, minimums)
 
-    allocations = minimums.copy()
-
-    remaining = availability - sum(minimums.values())
-
-    unmet_demands = {
-        sector: demands[sector] - minimums[sector]
+    allocations = {
+        sector: float(minimums[sector])
         for sector in SECTORS
     }
 
-    total_unmet = sum(unmet_demands.values())
+    remaining = (
+        float(availability)
+        - sum(allocations.values())
+    )
 
-    if total_unmet > 0:
+    capacities = {
+        sector: max(
+            0.0,
+            float(demands[sector]) - allocations[sector]
+        )
+        for sector in SECTORS
+    }
 
-        for sector in SECTORS:
+    tolerance = 1e-9
 
-            share = unmet_demands[sector] / total_unmet
+    while remaining > tolerance:
+
+        active = [
+            sector
+            for sector in SECTORS
+            if capacities[sector] > tolerance
+        ]
+
+        if not active:
+            break
+
+        total_capacity = sum(
+            capacities[sector]
+            for sector in active
+        )
+
+        if total_capacity <= tolerance:
+            break
+
+        amount_to_distribute = remaining
+        distributed = 0.0
+
+        for sector in active:
+
+            share = (
+                amount_to_distribute
+                * capacities[sector]
+                / total_capacity
+            )
 
             additional = min(
-                unmet_demands[sector],
-                remaining * share
+                share,
+                capacities[sector]
             )
 
             allocations[sector] += additional
+            capacities[sector] -= additional
+            distributed += additional
+
+        remaining -= distributed
+
+        if distributed <= tolerance:
+            break
 
     return allocations
 
@@ -96,19 +150,29 @@ def priority_allocation(
 
     validate_inputs(availability, demands, minimums)
 
-    if set(priority_order) != set(SECTORS):
+    if (
+        len(priority_order) != len(SECTORS)
+        or set(priority_order) != set(SECTORS)
+    ):
         raise ValueError(
-            "L'ordine di priorità deve contenere tutti i settori una sola volta."
+            "L'ordine di priorità deve contenere tutti i settori "
+            "una sola volta."
         )
 
-    allocations = minimums.copy()
+    allocations = {
+        sector: float(minimums[sector])
+        for sector in SECTORS
+    }
 
-    remaining = availability - sum(minimums.values())
+    remaining = (
+        float(availability)
+        - sum(allocations.values())
+    )
 
     for sector in priority_order:
 
         additional_need = (
-            demands[sector] - allocations[sector]
+            float(demands[sector]) - allocations[sector]
         )
 
         additional = min(
@@ -117,10 +181,9 @@ def priority_allocation(
         )
 
         allocations[sector] += additional
-
         remaining -= additional
 
-        if remaining <= 0:
+        if remaining <= 1e-9:
             break
 
     return allocations
@@ -170,20 +233,23 @@ def calculate_results(
 
     for sector in SECTORS:
 
-        demand = demands[sector]
-        allocated = allocations[sector]
+        demand = float(demands[sector])
+        allocated = float(allocations[sector])
 
         coverage = (
             allocated / demand * 100
             if demand > 0
-            else 100
+            else 100.0
         )
 
-        shortage = demand - allocated
+        shortage = max(
+            0.0,
+            demand - allocated
+        )
 
         results[sector] = {
             "demand": demand,
-            "minimum": minimums[sector],
+            "minimum": float(minimums[sector]),
             "allocated": allocated,
             "shortage": shortage,
             "coverage": coverage,
@@ -193,11 +259,20 @@ def calculate_results(
 
     return {
         "strategy": strategy,
-        "availability": availability,
-        "total_demand": sum(demands.values()),
-        "total_minimum": sum(minimums.values()),
+        "availability": float(availability),
+        "total_demand": sum(
+            float(demands[sector])
+            for sector in SECTORS
+        ),
+        "total_minimum": sum(
+            float(minimums[sector])
+            for sector in SECTORS
+        ),
         "total_allocated": total_allocated,
-        "unused_water": availability - total_allocated,
+        "unused_water": max(
+            0.0,
+            float(availability) - total_allocated
+        ),
         "sectors": results,
     }
 
