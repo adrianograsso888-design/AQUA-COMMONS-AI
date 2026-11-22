@@ -4,6 +4,8 @@
 # Analisi degli impatti delle decisioni di allocazione
 # ============================================================
 
+from math import isfinite
+
 from core.config import SECTORS
 
 
@@ -14,19 +16,55 @@ from core.config import SECTORS
 def validate_results(results):
 
     if not isinstance(results, dict):
-        raise TypeError("I risultati devono essere un dizionario.")
+        raise TypeError(
+            "I risultati devono essere un dizionario."
+        )
 
-    if "sectors" not in results:
-        raise ValueError("Manca la sezione dei risultati settoriali.")
+    required_global_fields = [
+        "availability",
+        "total_demand",
+        "total_allocated",
+        "total_shortage",
+        "total_minimum",
+        "sectors",
+    ]
+
+    for field in required_global_fields:
+
+        if field not in results:
+            raise ValueError(
+                f"Manca il campo generale: {field}."
+            )
+
+    if not isinstance(results["sectors"], dict):
+        raise TypeError(
+            "I risultati settoriali devono essere un dizionario."
+        )
 
     sector_results = results["sectors"]
 
+    if set(sector_results.keys()) != set(SECTORS):
+        raise ValueError(
+            "I risultati devono contenere esattamente tutti i settori."
+        )
+
+    for field in required_global_fields[:-1]:
+
+        try:
+            value = float(results[field])
+        except (TypeError, ValueError):
+            raise ValueError(
+                f"Il valore generale {field} non è numerico."
+            )
+
+        if not isfinite(value) or value < -1e-9:
+            raise ValueError(
+                f"Il valore generale {field} non è valido."
+            )
+
     for sector in SECTORS:
 
-        if sector not in sector_results:
-            raise ValueError(
-                f"Mancano i risultati del settore: {sector}."
-            )
+        sector_data = sector_results[sector]
 
         required_fields = [
             "demand",
@@ -38,10 +76,52 @@ def validate_results(results):
 
         for field in required_fields:
 
-            if field not in sector_results[sector]:
+            if field not in sector_data:
                 raise ValueError(
                     f"Manca il campo {field} per {sector}."
                 )
+
+            try:
+                value = float(sector_data[field])
+            except (TypeError, ValueError):
+                raise ValueError(
+                    f"Il campo {field} di {sector} non è numerico."
+                )
+
+            if not isfinite(value) or value < -1e-9:
+                raise ValueError(
+                    f"Il campo {field} di {sector} non è valido."
+                )
+
+        demand = float(sector_data["demand"])
+        minimum = float(sector_data["minimum"])
+        allocated = float(sector_data["allocated"])
+        shortage = float(sector_data["shortage"])
+
+        if minimum > demand + 1e-9:
+            raise ValueError(
+                f"Il minimo di {sector} supera la domanda."
+            )
+
+        if allocated > demand + 1e-9:
+            raise ValueError(
+                f"L'allocazione di {sector} supera la domanda."
+            )
+
+        if allocated < minimum - 1e-9:
+            raise ValueError(
+                f"L'allocazione di {sector} non rispetta il minimo."
+            )
+
+        expected_shortage = max(
+            0.0,
+            demand - allocated
+        )
+
+        if abs(shortage - expected_shortage) > 1e-6:
+            raise ValueError(
+                f"Il deficit di {sector} non è coerente con l'allocazione."
+            )
 
 
 # ============================================================
@@ -58,10 +138,10 @@ def calculate_sector_impacts(results):
 
         sector_data = results["sectors"][sector]
 
-        demand = sector_data["demand"]
-        minimum = sector_data["minimum"]
-        allocated = sector_data["allocated"]
-        shortage = sector_data["shortage"]
+        demand = float(sector_data["demand"])
+        minimum = float(sector_data["minimum"])
+        allocated = float(sector_data["allocated"])
+        shortage = float(sector_data["shortage"])
 
         coverage = (
             allocated / demand * 100
@@ -69,7 +149,9 @@ def calculate_sector_impacts(results):
             else 100.0
         )
 
-        minimum_respected = allocated >= minimum
+        minimum_respected = (
+            allocated >= minimum - 1e-9
+        )
 
         shortage_percentage = (
             shortage / demand * 100
@@ -101,26 +183,26 @@ def calculate_global_impacts(results):
     sectors = results["sectors"]
 
     total_demand = sum(
-        sectors[sector]["demand"]
+        float(sectors[sector]["demand"])
         for sector in SECTORS
     )
 
     total_allocated = sum(
-        sectors[sector]["allocated"]
+        float(sectors[sector]["allocated"])
         for sector in SECTORS
     )
 
     total_shortage = sum(
-        sectors[sector]["shortage"]
+        float(sectors[sector]["shortage"])
         for sector in SECTORS
     )
 
     total_minimum = sum(
-        sectors[sector]["minimum"]
+        float(sectors[sector]["minimum"])
         for sector in SECTORS
     )
 
-    availability = results["availability"]
+    availability = float(results["availability"])
 
     overall_coverage = (
         total_allocated / total_demand * 100
@@ -128,12 +210,15 @@ def calculate_global_impacts(results):
         else 100.0
     )
 
-    unused_water = availability - total_allocated
+    unused_water = max(
+        0.0,
+        availability - total_allocated
+    )
 
     sector_coverages = [
-        sectors[sector]["coverage"]
+        float(sectors[sector]["coverage"])
         for sector in SECTORS
-        if sectors[sector]["demand"] > 0
+        if float(sectors[sector]["demand"]) > 0
     ]
 
     average_sector_coverage = (
@@ -149,8 +234,8 @@ def calculate_global_impacts(results):
     )
 
     minimums_respected = all(
-        sectors[sector]["allocated"]
-        >= sectors[sector]["minimum"]
+        float(sectors[sector]["allocated"])
+        >= float(sectors[sector]["minimum"]) - 1e-9
         for sector in SECTORS
     )
 
