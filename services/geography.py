@@ -1,4 +1,3 @@
-
 # ============================================================
 # AQUA COMMONS AI
 # GEOGRAPHY SERVICE
@@ -13,11 +12,17 @@ import pandas as pd
 # ============================================================
 
 DEMO_TERRITORY = {
+
     "name": "Bacino dimostrativo",
+
     "region": "Territorio non specificato",
+
     "country": "Italia",
+
     "data_type": "simulated",
+
     "source": "Dataset geografico dimostrativo AQUA COMMONS AI",
+
 }
 
 
@@ -29,7 +34,7 @@ DEMO_LOCATIONS = [
 
     {
         "name": "Stazione idrometrica A",
-        "category": "Stazione di monitoraggio",
+        "category": "Idrologia",
         "latitude": 45.70,
         "longitude": 11.75,
         "indicator": "Portata fluviale",
@@ -39,7 +44,7 @@ DEMO_LOCATIONS = [
 
     {
         "name": "Stazione idrometrica B",
-        "category": "Stazione di monitoraggio",
+        "category": "Idrologia",
         "latitude": 45.65,
         "longitude": 11.85,
         "indicator": "Portata fluviale",
@@ -48,8 +53,8 @@ DEMO_LOCATIONS = [
     },
 
     {
-        "name": "Inv as o dimostrativo",
-        "category": "Inv as o",
+        "name": "Invaso dimostrativo",
+        "category": "Invasi",
         "latitude": 45.60,
         "longitude": 11.90,
         "indicator": "Volume immagazzinato",
@@ -59,12 +64,22 @@ DEMO_LOCATIONS = [
 
     {
         "name": "Stazione climatica A",
-        "category": "Stazione climatica",
+        "category": "Clima",
         "latitude": 45.75,
         "longitude": 11.80,
         "indicator": "Temperatura",
         "value": 25.5,
         "unit": "°C",
+    },
+
+    {
+        "name": "Punto di monitoraggio falda",
+        "category": "Falda",
+        "latitude": 45.68,
+        "longitude": 11.95,
+        "indicator": "Livello della falda",
+        "value": 12.4,
+        "unit": "m",
     },
 
 ]
@@ -100,25 +115,15 @@ def validate_geography(data):
     required_columns = [
 
         "name",
-
         "category",
-
         "latitude",
-
         "longitude",
-
         "indicator",
-
         "value",
-
         "unit",
-
         "territory",
-
         "data_type",
-
         "source",
-
         "quality",
 
     ]
