@@ -1,9 +1,19 @@
+# ============================================================
+# AQUA COMMONS AI
+# DATA INTEGRATION ENGINE
+# Integrazione dei dati idrologici, climatici e geografici
+# ============================================================
+
 import pandas as pd
 
 from services.hydrology import get_hydrology_data
 from services.climate import get_climate_data
 from services.geography import get_geography_data
 
+
+# ============================================================
+# CARICAMENTO DEI DATASET
+# ============================================================
 
 def load_integrated_data(mode="simulated"):
 
@@ -18,13 +28,64 @@ def load_integrated_data(mode="simulated"):
     }
 
 
+# ============================================================
+# INTEGRAZIONE DELLE SERIE TEMPORALI
+# ============================================================
+
 def integrate_time_series(hydrology_data, climate_data):
+
+    if not isinstance(hydrology_data, pd.DataFrame):
+        raise TypeError(
+            "I dati idrologici devono essere un DataFrame."
+        )
+
+    if not isinstance(climate_data, pd.DataFrame):
+        raise TypeError(
+            "I dati climatici devono essere un DataFrame."
+        )
+
+    if "date" not in hydrology_data.columns:
+        raise ValueError(
+            "La serie idrologica non contiene la colonna date."
+        )
+
+    if "date" not in climate_data.columns:
+        raise ValueError(
+            "La serie climatica non contiene la colonna date."
+        )
 
     hydrology = hydrology_data.copy()
     climate = climate_data.copy()
 
-    hydrology["date"] = pd.to_datetime(hydrology["date"])
-    climate["date"] = pd.to_datetime(climate["date"])
+    hydrology["date"] = pd.to_datetime(
+        hydrology["date"],
+        errors="coerce",
+    )
+
+    climate["date"] = pd.to_datetime(
+        climate["date"],
+        errors="coerce",
+    )
+
+    if hydrology["date"].isna().any():
+        raise ValueError(
+            "Sono presenti date non valide nei dati idrologici."
+        )
+
+    if climate["date"].isna().any():
+        raise ValueError(
+            "Sono presenti date non valide nei dati climatici."
+        )
+
+    if hydrology["date"].duplicated().any():
+        raise ValueError(
+            "Sono presenti date duplicate nei dati idrologici."
+        )
+
+    if climate["date"].duplicated().any():
+        raise ValueError(
+            "Sono presenti date duplicate nei dati climatici."
+        )
 
     integrated = pd.merge(
         hydrology,
@@ -34,12 +95,26 @@ def integrate_time_series(hydrology_data, climate_data):
         suffixes=("_hydrology", "_climate"),
     )
 
-    return integrated.sort_values("date").reset_index(drop=True)
+    return (
+        integrated
+        .sort_values("date")
+        .reset_index(drop=True)
+    )
 
+
+# ============================================================
+# ANALISI DELLA PROVENIENZA DEI DATI
+# ============================================================
 
 def analyze_data_provenance(data):
 
+    if not isinstance(data, pd.DataFrame):
+        raise TypeError(
+            "I dati devono essere un DataFrame Pandas."
+        )
+
     if data.empty:
+
         return {
             "status": "empty",
             "message": "Nessun dato disponibile.",
@@ -49,7 +124,8 @@ def analyze_data_provenance(data):
         }
 
     type_columns = [
-        column for column in [
+        column
+        for column in [
             "data_type",
             "data_type_hydrology",
             "data_type_climate",
@@ -58,7 +134,8 @@ def analyze_data_provenance(data):
     ]
 
     source_columns = [
-        column for column in [
+        column
+        for column in [
             "source",
             "source_hydrology",
             "source_climate",
@@ -70,33 +147,61 @@ def analyze_data_provenance(data):
     sources = set()
 
     for column in type_columns:
+
         data_types.update(
-            data[column].dropna().astype(str).unique()
+            data[column]
+            .dropna()
+            .astype(str)
+            .str.lower()
+            .unique()
         )
 
     for column in source_columns:
+
         sources.update(
-            data[column].dropna().astype(str).unique()
+            data[column]
+            .dropna()
+            .astype(str)
+            .unique()
         )
 
     data_types = sorted(data_types)
     sources = sorted(sources)
 
-    if data_types == ["simulated"]:
+    if not data_types:
+
+        status = "unknown"
+        message = (
+            "La tipologia dei dati non è disponibile."
+        )
+
+    elif data_types == ["simulated"]:
+
         status = "simulated"
-        message = "Il dataset contiene esclusivamente dati simulati."
+        message = (
+            "Il dataset contiene esclusivamente dati simulati."
+        )
 
     elif data_types == ["official"]:
-        status = "official"
-        message = "Il dataset contiene esclusivamente dati ufficiali."
 
-    elif not data_types:
-        status = "unknown"
-        message = "La tipologia dei dati non è disponibile."
+        status = "official"
+        message = (
+            "Il dataset contiene esclusivamente dati ufficiali."
+        )
+
+    elif data_types == ["manual"]:
+
+        status = "manual"
+        message = (
+            "Il dataset contiene esclusivamente dati manuali."
+        )
 
     else:
+
         status = "hybrid"
-        message = "Il dataset contiene tipologie differenti di dati."
+        message = (
+            "Il dataset contiene tipologie differenti di dati."
+        )
 
     return {
         "status": status,
@@ -107,10 +212,15 @@ def analyze_data_provenance(data):
     }
 
 
+# ============================================================
+# COSTRUZIONE DEL QUADRO INFORMATIVO INTEGRATO
+# ============================================================
+
 def build_integrated_overview(
     hydrology_analysis,
     climate_analysis,
     geography_summary,
+    data_status="simulated",
 ):
 
     return {
@@ -132,9 +242,13 @@ def build_integrated_overview(
             "categories": geography_summary["categories"],
         },
 
-        "data_status": "simulated",
+        "data_status": data_status,
     }
 
+
+# ============================================================
+# MOTORE DI INTEGRAZIONE COMPLETA
+# ============================================================
 
 def run_data_integration(mode="simulated"):
 
@@ -156,6 +270,7 @@ def run_data_integration(mode="simulated"):
         datasets["hydrology"]["analysis"],
         datasets["climate"]["analysis"],
         datasets["geography"]["summary"],
+        data_status=provenance["status"],
     )
 
     return {
