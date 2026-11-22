@@ -5,6 +5,7 @@
 # ============================================================
 
 from datetime import datetime
+from math import isfinite
 
 import pandas as pd
 
@@ -20,6 +21,28 @@ from core.config import (
 # STRUTTURA STANDARD DEI DATI
 # ============================================================
 
+DATA_COLUMNS = [
+    "name",
+    "value",
+    "unit",
+    "source",
+    "data_type",
+    "timestamp",
+    "territory",
+    "quality",
+]
+
+ALLOWED_DATA_TYPES = [
+    "official",
+    "manual",
+    "simulated",
+]
+
+
+# ============================================================
+# CREAZIONE DI UNA REGISTRAZIONE
+# ============================================================
+
 def create_data_record(
     name,
     value,
@@ -30,19 +53,6 @@ def create_data_record(
     territory=None,
     quality="non verificata",
 ):
-    """
-    Crea una registrazione standardizzata.
-
-    Ogni dato conserva:
-    - nome
-    - valore
-    - unità di misura
-    - fonte
-    - tipologia
-    - data di rilevazione
-    - territorio
-    - qualità
-    """
 
     if timestamp is None:
         timestamp = datetime.now().isoformat()
@@ -64,13 +74,6 @@ def create_data_record(
 # ============================================================
 
 def load_demo_data():
-    """
-    Carica i valori dimostrativi iniziali.
-
-    ATTENZIONE:
-    questi valori sono simulati e non rappresentano
-    misurazioni ufficiali di un bacino idrografico.
-    """
 
     records = []
 
@@ -92,10 +95,10 @@ def load_demo_data():
                 name=f"Domanda idrica - {sector}",
                 value=DEFAULT_DEMAND[sector],
                 unit="hm³",
-                source="Dataset dimostrativo AQUA COMMONS AI",
-                data_type="simulated",
-                quality="dato simulato",
-            )
+            source="Dataset dimostrativo AQUA COMMONS AI",
+            data_type="simulated",
+            quality="dato simulato",
+        )
         )
 
         records.append(
@@ -109,7 +112,10 @@ def load_demo_data():
             )
         )
 
-    return pd.DataFrame(records)
+    return pd.DataFrame(
+        records,
+        columns=DATA_COLUMNS,
+    )
 
 
 # ============================================================
@@ -118,49 +124,97 @@ def load_demo_data():
 
 def validate_data(data):
 
-    required_columns = [
-        "name",
-        "value",
-        "unit",
-        "source",
-        "data_type",
-        "timestamp",
-        "territory",
-        "quality",
-    ]
-
     if not isinstance(data, pd.DataFrame):
-        raise TypeError("Il dataset deve essere un DataFrame Pandas.")
+
+        raise TypeError(
+            "Il dataset deve essere un DataFrame Pandas."
+        )
 
     missing_columns = [
         column
-        for column in required_columns
+        for column in DATA_COLUMNS
         if column not in data.columns
     ]
 
     if missing_columns:
+
         raise ValueError(
             f"Colonne mancanti nel dataset: {missing_columns}"
         )
 
-    if data["value"].isna().any():
-        raise ValueError("Sono presenti valori mancanti.")
+    if data.empty:
+        return True
 
-    if not pd.to_numeric(
-        data["value"], errors="coerce"
-    ).notna().all():
-        raise ValueError("Sono presenti valori non numerici.")
+    # --------------------------------------------------------
+    # CONTROLLO DEI CAMPI TESTUALI
+    # --------------------------------------------------------
 
-    allowed_types = [
-        "official",
-        "manual",
-        "simulated",
+    text_columns = [
+        "name",
+        "unit",
+        "source",
+        "data_type",
+        "timestamp",
+        "quality",
     ]
 
-    invalid_types = ~data["data_type"].isin(allowed_types)
+    for column in text_columns:
+
+        if data[column].isna().any():
+
+            raise ValueError(
+                f"Sono presenti valori mancanti nella colonna {column}."
+            )
+
+        empty_values = (
+            data[column]
+            .astype(str)
+            .str.strip()
+            .eq("")
+        )
+
+        if empty_values.any():
+
+            raise ValueError(
+                f"Sono presenti valori vuoti nella colonna {column}."
+            )
+
+    # --------------------------------------------------------
+    # CONTROLLO DEI VALORI NUMERICI
+    # --------------------------------------------------------
+
+    numeric_values = pd.to_numeric(
+        data["value"],
+        errors="coerce",
+    )
+
+    if numeric_values.isna().any():
+
+        raise ValueError(
+            "Sono presenti valori mancanti o non numerici."
+        )
+
+    for value in numeric_values:
+
+        if not isfinite(float(value)):
+
+            raise ValueError(
+                "Sono presenti valori numerici non finiti."
+            )
+
+    # --------------------------------------------------------
+    # CONTROLLO DELLA TIPOLOGIA DEI DATI
+    # --------------------------------------------------------
+
+    invalid_types = ~data["data_type"].isin(
+        ALLOWED_DATA_TYPES
+    )
 
     if invalid_types.any():
-        raise ValueError("Tipologia di dato non riconosciuta.")
+
+        raise ValueError(
+            "Tipologia di dato non riconosciuta."
+        )
 
     return True
 
@@ -178,16 +232,7 @@ def load_data(mode="simulated"):
     elif mode == "manual":
 
         data = pd.DataFrame(
-            columns=[
-                "name",
-                "value",
-                "unit",
-                "source",
-                "data_type",
-                "timestamp",
-                "territory",
-                "quality",
-            ]
+            columns=DATA_COLUMNS
         )
 
     elif mode == "official":
@@ -196,16 +241,7 @@ def load_data(mode="simulated"):
         # verrà implementato nei moduli successivi.
 
         data = pd.DataFrame(
-            columns=[
-                "name",
-                "value",
-                "unit",
-                "source",
-                "data_type",
-                "timestamp",
-                "territory",
-                "quality",
-            ]
+            columns=DATA_COLUMNS
         )
 
     else:
@@ -242,7 +278,11 @@ def get_data_summary(data):
             (data["data_type"] == "simulated").sum()
         ),
 
-        "sources": data["source"].nunique(),
+        "sources": int(
+            data["source"].nunique()
+        ),
 
-        "territories": data["territory"].nunique(),
+        "territories": int(
+            data["territory"].nunique()
+        ),
     }
